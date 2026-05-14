@@ -1,17 +1,17 @@
-# 头部颜色追踪 - Tonybot 竞赛代码
+# 双柱绕行 - Tonybot 竞赛代码
 
 ## 项目简介
 
-本项目包含 Tonybot 机器人头部颜色追踪功能的两套方案：
+本项目包含 Tonybot 机器人视觉导航功能的两套方案：
 
-### ESP32S3Cam_ColorDetection
-ESP32-S3 摄像头模块上的颜色检测程序。负责摄像头图像采集、HSV 颜色空间转换、目标颜色识别，并通过 IIC 将检测结果发送给主控板。
+### ESP32S3Cam
+ESP32-S3 视觉模块程序。负责摄像头图像采集、HSV 颜色空间转换、目标颜色识别，并通过 IIC 将检测结果发送给主控板。
 
-### color_follow
-主控板的颜色追踪与头部运动控制程序。接收摄像头颜色数据，控制舵机实现头部对目标的实时追踪，同时支持：
+### PillarNavigator
+主控板双柱绕行导航程序。接收视觉模块的颜色数据，控制舵机和运动实现在两根彩色柱子之间的导航：
+- 目标跟随接近（ObjectFollower）
 - 头部追踪（HeadTracker）
-- 物体跟随（ObjectFollower）
-- 圆形柱体检测（CirclePillar）
+- 绕柱避障（CirclePillar）
 - 跌倒检测（FallDetector）
 
 ## 硬件平台
@@ -24,9 +24,9 @@ ESP32-S3 摄像头模块上的颜色检测程序。负责摄像头图像采集�
 ## 目录结构
 
 ```
-├── ESP32S3Cam_ColorDetection/   # ESP32-S3 摄像头颜色检测
-├── color_follow/                # 头部颜色追踪主控程序
-│   ├── src/                     # 本地依赖库
+├── ESP32S3Cam/          # ESP32-S3 视觉模块（摄像头+颜色检测+IIC发送）
+├── PillarNavigator/       # 主控双柱绕行导航程序
+│   ├── src/               # 本地依赖库
 │   │   ├── BUZZER/
 │   │   ├── IMU/
 │   │   ├── IR/
@@ -34,8 +34,8 @@ ESP32-S3 摄像头模块上的颜色检测程序。负责摄像头图像采集�
 │   │   ├── PwmServo/
 │   │   ├── Sensor/
 │   │   └── WMMatrixLed/
-│   └── pack/                    # 参考安装包
-└── libraries/                   # 外部依赖库
+│   └── pack/              # 参考安装包
+└── libraries/             # 外部依赖库（QMI8658、SensorLib）
 ```
 
 ## 开发环境
