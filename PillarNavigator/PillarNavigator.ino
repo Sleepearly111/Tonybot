@@ -15,18 +15,15 @@
 #include "ObjectFollower.hpp"
 #include "CirclePillar.hpp"
 #include "FallDetector.hpp"
-
-#define TURN_LEFT  23
-#define TURN_RIGHT 24
+#include "PillarRoute.hpp"
 
 enum MainState {
-    GO_TO_BLUE,
-    CIRCLE_BLUE,
-    GO_TO_RED,
-    CIRCLE_RED
+    GO_TO_PILLAR,
+    CIRCLE_PILLAR,
+    DONE
 };
 
-static MainState main_state = GO_TO_BLUE;
+static MainState main_state = GO_TO_PILLAR;
 
 LobotServoController Controller(Serial2);
 HWSensor hwsensor;
@@ -35,7 +32,7 @@ HW_ESP32Cam hw_cam;
 
 void setup() {
     Serial.begin(115200);
-    fallDetector_init();  // IMU初始化+6s预热
+    fallDetector_init();
     Serial2.begin(9600, SERIAL_8N1, IO_BaseRX, IO_BaseTX);
     sonarServo.attach(IO_Servo);
     sonarServo.write(90);
@@ -44,59 +41,48 @@ void setup() {
     delay(1500);
     hwsensor.ultrasoundColor(0, 0, 0, 0, 0, 0);
     delay(2000);
+
+    // ========== 一句话选路线 ==========
+    pillarRoute_start(ROUTE_BLUE_RIGHT);
+    // pillarRoute_start(ROUTE_BLUE_LEFT);
+    // pillarRoute_start(ROUTE_RED_RIGHT);
+    // pillarRoute_start(ROUTE_RED_LEFT);
+
     tracker_set_color(TRACK_COLOR_RED);
     Serial.println("start.");
-}
-
-void switchTo(MainState s) {
-    main_state = s;
-#ifdef CIRCLE_DEBUG
-    const char* names[] = {"走向蓝柱", "绕蓝柱", "走向红柱", "绕红柱"};
-    Serial.print("[主状态] → ");
-    Serial.println(names[s]);
-#endif
 }
 
 void loop() {
     switch (main_state) {
 
-        case GO_TO_BLUE: {
-            objectFollower_update(TRACK_COLOR_BLUE);
-            // 到达蓝色柱子
+        case GO_TO_PILLAR: {
+            objectFollower_update(pillarRoute_color());
             if (get_width() > 230) {
-                switchTo(CIRCLE_BLUE);
                 circlePillar_init();
+                main_state = CIRCLE_PILLAR;
             }
             break;
         }
 
-        case CIRCLE_BLUE: {
-            circlePillar_update(TRACK_COLOR_BLUE, CIRCLE_RIGHT);
-            // 绕蓝柱满6步，切换红色走向红柱
-            if (circlePillar_getSteps() >= 6) {
-                circlePillar_init();
-                headTracker_resetToCenter();
-                tracker_set_color(TRACK_COLOR_RED);
-                objectFollower_init();
-                switchTo(GO_TO_RED);
+        case CIRCLE_PILLAR: {
+            circlePillar_update(pillarRoute_color(), pillarRoute_direction());
+            // 绕柱完成（内部满4轮前进自动DONE）
+            if (circlePillar_isDone()) {
+                if (pillarRoute_next()) {
+                    // 两根柱子全部绕完
+                    main_state = DONE;
+                } else {
+                    // 切到第二根柱子
+                    headTracker_resetToCenter();
+                    objectFollower_init();
+                    main_state = GO_TO_PILLAR;
+                }
             }
             break;
         }
 
-        case GO_TO_RED: {
-            objectFollower_update(TRACK_COLOR_RED);
-            // 到达红色柱子
-            if (get_width() > 230) {
-                switchTo(CIRCLE_RED);
-                circlePillar_init();
-            }
+        case DONE:
             break;
-        }
-
-        case CIRCLE_RED: {
-            circlePillar_update(TRACK_COLOR_RED, CIRCLE_LEFT);
-            break;
-        }
     }
 
     delay(50);
