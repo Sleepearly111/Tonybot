@@ -61,6 +61,8 @@ static int turning_last_dir = 0;
 static int width_stable_count = 0;
 // 标记已到达动作是否已执行（只执行一次）
 static bool arrived_executed = false;
+// 至少执行过一次前进后才允许判定到达
+static bool has_approached = false;
 
 #ifdef OBJECT_FOLLOWER_DEBUG
 static const char* stateNames[] = {
@@ -85,6 +87,7 @@ void objectFollower_init() {
     turning_last_dir = 0;
     width_stable_count = 0;
     arrived_executed = false;
+    has_approached = false;
     stable_block_time = millis();  // 首次进入等300ms让摄像头跟踪
 }
 
@@ -116,7 +119,7 @@ void objectFollower_update(uint8_t color_reg, int deadband) {
 
     // 宽度稳定检测：当物体宽度持续大于阈值，判定已到达
     uint8_t cur_width = get_width();
-    if (cur_width > ARRIVED_WIDTH && state != FollowState::ARRIVED) {
+    if (cur_width > ARRIVED_WIDTH && state != FollowState::ARRIVED && has_approached) {
         width_stable_count++;
         if (width_stable_count >= ARRIVED_STABLE_COUNT) {
 #ifdef OBJECT_FOLLOWER_DEBUG
@@ -171,6 +174,7 @@ void objectFollower_update(uint8_t color_reg, int deadband) {
                 Serial.println("[决策] 在允许区间内，开始前进");
 #endif
                 steps_remaining = FORWARD_STEPS;
+                has_approached = true;
                 Controller.runActionGroup(FORWARD_GROUP, 1);
                 step_timer = millis();
                 state = FollowState::FORWARD_EXEC;
