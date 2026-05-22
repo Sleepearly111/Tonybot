@@ -2,7 +2,7 @@
 #define SHAPE_VOICE_PLAYER_H
 
 // 1. 引入硬件核心配置（完整引脚定义）
-#include "base_config.h"
+#include "../base_config.h"
 // 2. 引入I2C通信核心库（必须，ESP32 I2C依赖）
 #include <Wire.h>
 // 3. 引入TTS语音模块驱动（同目录引用，确保完整）

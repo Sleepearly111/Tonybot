@@ -4,10 +4,9 @@
 // 基础依赖（必须）
 #include "Arduino.h"
 // 项目核心依赖（主程序已包含）
-#include "base_config.h"
-#include "LobotServoController.h"
-#include "Hiwonder.hpp"
-#include "HWSensor.h"
+#include "../base_config.h"
+#include "../LobotServoController.h"
+#include "../Hiwonder.hpp"
 
 // ============== 外部对象声明（主程序已初始化，这里仅引用）==============
 extern IMU imu;

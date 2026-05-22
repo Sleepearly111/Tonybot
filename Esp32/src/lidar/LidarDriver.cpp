@@ -1,4 +1,17 @@
 #include "LidarDriver.h"
+#include "soc/timer_group_struct.h"
+#include "soc/timer_group_reg.h"
+
+// 长延时期间传狗，防止 TG1WDT 超时复位
+static void waitMs(unsigned long ms) {
+    unsigned long start = millis();
+    while (millis() - start < ms) {
+        delay(10);
+        TIMERG1.wdt_wprotect = TIMG_WDT_WKEY_VALUE;
+        TIMERG1.wdt_feed = 1;
+        TIMERG1.wdt_wprotect = 0;
+    }
+}
 
 // ============================================================
 // 构造函数
@@ -24,9 +37,9 @@ LidarDriver::~LidarDriver() {
 // ============================================================
 // begin() —— 初始化 A1M8 激光雷达
 //
-// 注意：RPLidar 库的 begin() 内部会调 Serial2.begin(115200)
-// 但不传引脚参数，导致串口回到默认引脚(16/17)。
-// 必须在库 begin() 之后重新配置 Serial2 引脚。
+// 注意：RPLidar 库的 begin() 内部会调 Serial1.begin(115200)
+// 但不传引脚参数，导致回到 Serial1 默认引脚(9/10)。
+// 必须在库 begin() 之后重新配置 Serial1 引脚。
 // ============================================================
 bool LidarDriver::begin(int rxPin, int txPin, int motorPin) {
     m_motorPin = motorPin;
@@ -38,30 +51,30 @@ bool LidarDriver::begin(int rxPin, int txPin, int motorPin) {
     digitalWrite(m_motorPin, LOW);
 
     // ——————————————————————————————————————————————
-    // 1. 初始化 Serial2 并启动电机
+    // 1. 初始化 Serial1 并启动电机
     // ——————————————————————————————————————————————
-    Serial2.begin(115200, SERIAL_8N1, rxPin, txPin);
+    Serial1.begin(115200, SERIAL_8N1, rxPin, txPin);
     delay(100);
 
     Serial.println("[LIDAR] 启动电机...");
     digitalWrite(m_motorPin, HIGH);
-    delay(2000);  // 等电机稳定
+    waitMs(2000);  // 等电机稳定（含喂狗）
 
     // 清空电机启动期间堆积的扫描数据
-    while (Serial2.available()) Serial2.read();
+    while (Serial1.available()) Serial1.read();
 
     // ——————————————————————————————————————————————
     // 2. 绑定 RPLidar 库
     // ——————————————————————————————————————————————
-    m_lidar.begin(Serial2);
+    m_lidar.begin(Serial1);
 
-    // ⚠ 库的 begin() 内部调了 Serial2.begin(115200) → 引脚被重设回默认！
+    // ⚠ 库的 begin() 内部调了 Serial1.begin(115200) → 引脚被重设回默认！
     //    必须重新配置成我们的引脚
-    Serial2.end();
+    Serial1.end();
     delay(10);
-    Serial2.begin(115200, SERIAL_8N1, rxPin, txPin);
+    Serial1.begin(115200, SERIAL_8N1, rxPin, txPin);
     delay(100);
-    while (Serial2.available()) Serial2.read();  // 清干净
+    while (Serial1.available()) Serial1.read();  // 清干净
 
     // ——————————————————————————————————————————————
     // 3. 获取设备信息验证通信
@@ -85,7 +98,7 @@ bool LidarDriver::begin(int rxPin, int txPin, int motorPin) {
     // 4. 启动扫描
     // ——————————————————————————————————————————————
     delay(100);
-    while (Serial2.available()) Serial2.read();
+    while (Serial1.available()) Serial1.read();
 
     result = m_lidar.startScan();
     Serial.printf("[LIDAR] startScan: 0x%X\n", result);
@@ -97,8 +110,8 @@ bool LidarDriver::begin(int rxPin, int txPin, int motorPin) {
     }
 
     // 等一会确认数据流入
-    delay(500);
-    int avail = Serial2.available();
+    waitMs(500);
+    int avail = Serial1.available();
     Serial.printf("[LIDAR] 扫描启动后缓冲区: %d 字节\n", avail);
 
     m_connected = true;
@@ -128,12 +141,11 @@ bool LidarDriver::update() {
     if (IS_OK(m_lidar.waitPoint())) {
         float dist   = m_lidar.getCurrentPoint().distance;
         float angle  = m_lidar.getCurrentPoint().angle;
-        bool  start  = m_lidar.getCurrentPoint().startBit;
         uint8_t qual = m_lidar.getCurrentPoint().quality;
 
         int idx = ((int)(angle + 0.5f)) % LIDAR_MAP_SIZE;
 
-        if (start && m_lastAngle > 350 && idx < 10) {
+        if (m_lastAngle > 350 && idx < 10) {
             m_scanReady = true;
         }
         m_lastAngle = idx;
@@ -436,45 +448,51 @@ int LidarDriver::classifyObjectAt(int angleDeg, ShapeInfo* info) {
     info->distStddev = stddev;
 
     // ——————————————————————————————————————————————
-    // 3. 判断是否为立方体（平面 + 锐利边缘）
+    // 3. 计算分类指标
     // ——————————————————————————————————————————————
-    float internalGrad = (internalGradCount > 0) ? (internalGradSum / internalGradCount) : 1.0f;
+    float internalGrad = (internalGradCount > 0) ? (internalGradSum / internalGradCount) : 999.0f;
     bool sharpEdges = (leftEdgeGrad > internalGrad * 2.5f &&
                       rightEdgeGrad > internalGrad * 2.5f);
     info->sharpEdges = sharpEdges;
 
-    // 立方体：平面（低标准差）+ 边缘陡峭
-    if (sharpEdges && stddev < 25.0f) {
-        info->shapeType = 2;    // 正方体
+    // 圆柱体预期角宽度：2·asin(R / (D+R))，R=150mm（已知圆柱直径 300mm）
+    float expectedRad = 2.0f * asinf(150.0f / (minD + 150.0f));
+    float expectedDeg = expectedRad * 180.0f / 3.14159265f;
+    float spanRatio = (float)span / expectedDeg;
+
+    // 平面度：(max - min) / mean，越小越平坦
+    float flatness = (maxD - minD) / mean;
+
+    // 调试输出（分类前先打印，方便调参）
+    Serial.printf("[LIDAR_SHAPE] a=%3d°  span=%2d°  dist=%4.0f  std=%.1f"
+                  "  ig=%.1f  lg=%.1f  rg=%.1f  sharp=%s"
+                  "  expCyl=%d°  ratio=%.2f  flat=%.3f\n",
+                  angleDeg, span, minD, stddev,
+                  internalGrad, leftEdgeGrad, rightEdgeGrad,
+                  sharpEdges ? "Y" : "N",
+                  (int)expectedDeg, spanRatio, flatness);
+
+    // ——————————————————————————————————————————————
+    // 4. 形状分类
+    //    顺序：立方体(最平坦) → 球体(窄弧面) → 圆柱体(宽弧面)
+    // ——————————————————————————————————————————————
+
+    // 立方体：表面极度平坦（远距离下圆柱的弧度也能满足，必须极严格）
+    if (stddev < 8.0f && flatness < 0.03f && internalGrad < 2.0f) {
+        info->shapeType = 2;
         return 2;
     }
 
-    // ——————————————————————————————————————————————
-    // 4. 区分球体与圆柱体（弧面物体）
-    // ——————————————————————————————————————————————
-    // 圆柱体预期角宽度：2·asin(R / (D+R))，R=150mm
-    float expectedRad = 2.0f * asinf(150.0f / (minD + 150.0f));
-    float expectedDeg = expectedRad * 180.0f / 3.14159265f;
-
-    // 实际角宽度与预期值的比值
-    float spanRatio = (float)span / expectedDeg;
-
-    // 调试输出
-    Serial.printf("[LIDAR_SHAPE] angle=%d  span=%d°  minD=%.0f  stddev=%.1f"
-                  "  internalGrad=%.1f  leftG=%.1f  rightG=%.1f"
-                  "  expCyl=%d°  ratio=%.2f\n",
-                  angleDeg, span, minD, stddev,
-                  internalGrad, leftEdgeGrad, rightEdgeGrad,
-                  (int)expectedDeg, spanRatio);
-
-    // 比值判断：
-    //   spanRatio ≈ 1.0~1.3 → 立方体或被完整观测到的柱体 → 圆柱
-    //   spanRatio ≈ 0.5~0.8 → 截面明显偏小 → 球体（激光雷达在球体下半部）
-    if (spanRatio > 0.78f) {
-        info->shapeType = 3;    // 圆柱体
-    } else {
-        info->shapeType = 1;    // 球体（截面比圆柱小）
+    // 球体：角宽明显小于 300mm 圆柱的预期值
+    // 阈值说明：圆柱实测角宽 ~21-23°，球体 ~15-17°
+    if (spanRatio <= 0.78f) {
+        info->shapeType = 1;
+        return 1;
     }
+
+    // 其余 → 圆柱体
+    info->shapeType = 3;
+    return 3;
 
     return info->shapeType;
 }

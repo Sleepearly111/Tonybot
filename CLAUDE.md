@@ -25,6 +25,33 @@ All commands run from inside the project directory (`Esp32/` or `Esp32S3/`). In 
 - `main` — tested, competition-ready code
 - New features → branch from `develop`, PR back to `develop`
 
+## Current Status (2026-05-22)
+
+**正在进行的任务：** `Esp32/src/main.cpp` 行走 + 形状识别集成测试
+
+`main.cpp` 当前流程：
+1. 初始化舵机（Serial2, pins 16/17）→ 直立（动作组 0）
+2. 初始化激光雷达（Serial1, pins 32/33）→ 360° 扫描
+3. 前进 2 步（动作组 25）→ 停止 → 前方 ±45° 形状识别（球/正方体/圆柱体）
+
+**已知问题：**
+
+| Issue | Severity | Status |
+|-------|----------|--------|
+| **TG1WDT_SYS_RESET** — `setup()` 中累计 `delay()` 超过 5 秒触发硬件看门狗复位 | 🔴 阻塞 | 未解决 |
+| Serial1/Serial2 端口冲突已修复（雷达→Serial1，舵机→Serial2）| 🟢 已解决 | ✅ |
+| LiDAR 坐标系映射：`HEADING_OFFSET=90`（雷达 90°=机器人 0°前方）| 🟢 已解决 | ✅ |
+| 形状分类阈值调优 — 1° 分辨率下 >400mm 球体/圆柱体难区分 | 🟡 已知限制 | 待场地实测 |
+
+**TG1WDT 已尝试方案：**
+1. `disableCore1WDT()` → 报错 "Failed to remove Core 1 IDLE task from WDT"，无效
+2. `wdt_config0.val = 0` 禁用硬件 WDT → 系统在 `lidar.begin()` 中彻底挂死
+3. `LidarDriver.cpp` 中 `waitMs()` 定期喂狗 → 仍复位，因为 `main.cpp setup()` 里的 `delay(2000)` 没换成喂狗
+
+**推荐修复方向：** 将 `main.cpp setup()` 中所有长 `delay()` 也换成 `waitMs()` 喂狗循环，或把初始化流程拆成非阻塞状态机。
+
+---
+
 ## Project Context
 
 **第二十八届中国机器人及人工智能大赛 - 具身智能任务赛（线下家庭服务场景）**。机器人从起点出发自主完成 3 个连续任务（避障→识别→播报），全程无遥控。
@@ -62,26 +89,29 @@ ESP32-S3 (slave 0x52)                  ESP32 (master)
 ### Source layout
 
 ```
-Esp32/src/          Esp32S3/src/
-├── main.cpp        ├── main.cpp
-├── globals.cpp     ├── camera_setting.*
-├── base_config.h   ├── VisionAI.*
-├── voice/          ├── iic_data_send.*
-│   ├── HWSensor.*  ├── color_detection.*
-│   └── ShapeVoicePlayer.* └── who_ai_utils.*
+Esp32/src/              Esp32S3/src/
+├── main.cpp            ├── main.cpp
+├── globals.cpp         ├── camera_setting.*
+├── base_config.h       ├── VisionAI.*
+├── hw_esp32cam_ctl.*   ├── iic_data_send.*
+├── voice/              ├── color_detection.*
+│   ├── HWSensor.*      └── who_ai_utils.*
+│   └── ShapeVoicePlayer.*
 ├── lidar/
-│   └── LidarDriver.*
+│   └── LidarDriver.*       ← A1M8 360°扫描 + 形状分类
 ├── fall/
 │   ├── TumbleGuard.*
 │   └── FallDetector.*
 ├── tracking/
-│   ├── HeadTracker.*
-│   ├── ObjectFollower.*
-│   ├── CirclePillar.*
-│   └── RobotTracking.*
-├── IMU/
+│   ├── HeadTracker.*       ← 头部舵机追踪色块
+│   ├── ObjectFollower.*    ← 跟随色块状态机
+│   ├── CirclePillar.*      ← 绕柱导航
+│   └── RobotTracking.*     ← PID 视觉追踪
 ├── LobotServoCtl/
-└── PwmServo/
+│   └── LobotServoController.cpp  ← 串口舵机驱动
+├── PwmServo/
+│   └── Servo.cpp                ← PWM 舵机驱动
+└── IMU/
 ```
 
 ### Module status

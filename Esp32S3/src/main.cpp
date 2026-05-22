@@ -29,7 +29,7 @@ void loop() {
         tx_label = 0x10 + label_id; // 1->0x11, 2->0x12, 3->0x13
     }
     
-    update_ai_iic_data(tx_label, 0x00);
+    update_ai_iic_data(tx_label, label_id);
 
     vTaskDelay(100 / portTICK_PERIOD_MS); 
 }

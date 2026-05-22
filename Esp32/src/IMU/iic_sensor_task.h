@@ -3,7 +3,7 @@
 
 #include "Arduino.h"
 #include "MadgwickAHRS.h"
-#include <SensorQMI8658.hpp>
+#include "SensorQMI8658.hpp"
 
 #ifdef __cplusplus
 extern "C" 

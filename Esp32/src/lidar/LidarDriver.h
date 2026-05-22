@@ -71,6 +71,7 @@ public:
     // === 裸数据访问 ===
     const float*   getMap()    const { return m_map; }
     const uint8_t* getQuality()const { return m_quality; }
+    uint32_t getPointCount() const { return m_pointCount; }
 
 private:
     RPLidar     m_lidar;

@@ -1,7 +1,7 @@
 #ifndef __HIWONDER_H
 #define __HIWONDER_H
 
-#include <Ticker.h>
+#include "stdint.h"
 #include "IMU/iic_sensor_task.h"
 
 class IMU{

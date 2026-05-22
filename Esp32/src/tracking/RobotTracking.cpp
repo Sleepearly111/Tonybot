@@ -1,6 +1,6 @@
 #include "RobotTracking.h"
-#include <Servo.h>
-#include "LobotServoController.h"
+#include "../Servo.h"
+#include "../LobotServoController.h"
 
 extern Servo headServo; 
 extern LobotServoController Controller;
