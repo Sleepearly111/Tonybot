@@ -36,7 +36,7 @@ extern LobotServoController Controller;
 #define CIRCLE_L_ANGLE_MIN  8
 #define CIRCLE_L_ANGLE_MAX  60
 #define CIRCLE_R_ANGLE_MIN  120
-#define CIRCLE_R_ANGLE_MAX  165
+#define CIRCLE_R_ANGLE_MAX  160
 
 #define CIRCLING_WIDTH_MAX  180  // 绕柱阶段最大宽度
 
@@ -52,12 +52,13 @@ static bool circle_first_entry = true;
 
 static uint8_t  circle_direction = CIRCLE_LEFT;
 static int      circle_width_min = 130;
-static int      circle_width_max = 175;
+static int      circle_width_max = 190;
 static bool     circle_done = false;
 
 // 侧身就位阶段
 static unsigned long last_adjust_time = 0;
 static bool     adjust_cooldown = false;
+static unsigned long sideways_start_time = 0;  // 侧身就位开始时间
 
 // 绕柱阶段
 static unsigned long circle_step_timer = 0;
@@ -66,7 +67,9 @@ static bool     extreme_recovery = false;
 static bool     big_turn_done = false;
 static unsigned long last_forward_time = 0;
 static int      slide_235_count = 0;
-static int      total_forward_steps = 0;  // 总前进计数
+static int      forward_rounds = 0;       // 当前前进轮数
+static int      max_rounds = 6;            // 目标轮数
+static bool     emergency_phase2 = false;  // 紧急避让阶段2：STAND后执行侧滑
 static bool     stand_pending = false;
 static unsigned long stand_timer = 0;
 static bool     was_forward = false;       // 上一步是否是前进
@@ -91,7 +94,7 @@ static bool isWidthStable(uint8_t &stable_width) {
         _width_wait_start = 0;
         return true;
     }
-    if (millis() - _width_wait_start >= 10000) {
+    if (millis() - _width_wait_start >= 3000) {
         stable_width = cur;
         _width_wait_start = 0;
         _width_cnt = 3;
@@ -118,19 +121,30 @@ static const char* circleStateNames[] = {
 };
 #endif
 
-void circlePillar_init() {
+void circlePillar_init(int rounds) {
     circle_state = CircleState::SIDEWAY_POSITION;
     circle_prev = circle_state;
     circle_done = false;
     last_adjust_time = 0;
     adjust_cooldown = false;
     step_in_progress = false;
+    extreme_recovery = false;
+    big_turn_done = false;
+    slide_235_count = 0;
+    forward_rounds = 0;
+    max_rounds = rounds;
+    emergency_phase2 = false;
+    last_forward_time = 0;
+    stand_pending = false;
+    was_forward = false;
+    circle_first_entry = true;
+    sideways_start_time = millis();
     resetStableCheck();
     resetWidthCheck();
 }
 
 int circlePillar_getSteps() {
-    return total_forward_steps;
+    return forward_rounds;
 }
 
 bool circlePillar_isDone() {
@@ -181,6 +195,19 @@ void circlePillar_update(uint8_t color_reg, uint8_t direction) {
                 resetWidthCheck();
             }
 
+            // 30秒超时，直接进入绕柱
+            if (millis() - sideways_start_time > 30000) {
+#ifdef CIRCLE_DEBUG
+                Serial.println("[侧身就位] 超时30s，直接进入绕柱");
+#endif
+                resetStableCheck();
+                resetWidthCheck();
+                last_forward_time = millis();
+                big_turn_done = false;
+                circle_state = CircleState::CIRCLING;
+                break;
+            }
+
             if (adjust_cooldown) {
                 if (millis() - last_adjust_time >= ADJUST_COOLDOWN) {
                     adjust_cooldown = false;
@@ -190,7 +217,7 @@ void circlePillar_update(uint8_t color_reg, uint8_t direction) {
                 break;
             }
 
-            // 目标丢失：连续1.5秒没识别到，小步回调找目标
+            // 目标丢失：连续1秒没识别到，小步回调找目标
             static int lost_count = 0;
             static unsigned long lost_start = 0;
             if (obj_width == 0) {
@@ -200,7 +227,7 @@ void circlePillar_update(uint8_t color_reg, uint8_t direction) {
                     Serial.println("[侧身就位] 目标丢失，小步回调");
 #endif
                     if (circle_direction == CIRCLE_LEFT) {
-                        Controller.runActionGroup(TURN_RIGHT_S, 2);
+                        Controller.runActionGroup(TURN_RIGHT_S, 3);
                     } else {
                         Controller.runActionGroup(TURN_LEFT_S, 2);
                     }
@@ -291,8 +318,45 @@ void circlePillar_update(uint8_t color_reg, uint8_t direction) {
             uint8_t stable_angle;
             if (!isAngleStable(stable_angle)) break;
 
-            uint8_t stable_width;
-            if (!isWidthStable(stable_width)) break;
+            uint8_t stable_width = get_width();
+
+            // 紧急避让：已注释，前进中不打断
+            /*
+            if (stable_width > 220 && (!step_in_progress || was_forward)) {
+                if (step_in_progress && was_forward) {
+                    was_forward = false;
+                }
+                if (slide_235_count > 3) {
+#ifdef CIRCLE_DEBUG
+                    Serial.print("[绕柱] 侧滑已达3次，强制前进 轮数=");
+                    Serial.println(forward_rounds + 1);
+#endif
+                    slide_235_count = 0;
+                    emergency_phase2 = false;
+                    was_forward = true;
+                    forward_rounds++;
+                    Controller.runActionGroup(FORWARD, 3);
+                } else if (!emergency_phase2) {
+                    slide_235_count++;
+                    Controller.runActionGroup(STAND, 1);
+                    emergency_phase2 = true;
+                } else {
+                    if (circle_direction == CIRCLE_LEFT) {
+                        Controller.runActionGroup(SLIDE_LEFT, 1);
+                    } else {
+                        Controller.runActionGroup(SLIDE_RIGHT, 1);
+                    }
+                    emergency_phase2 = false;
+                }
+                circle_step_timer = millis();
+                step_in_progress = true;
+                break;
+            }
+            if (stable_width <= 220) {
+                slide_235_count = 0;
+                emergency_phase2 = false;
+            }
+            */
 
             if (!step_in_progress) {
                 // 立正冷却：等机器人站稳再判断
@@ -305,19 +369,30 @@ void circlePillar_update(uint8_t color_reg, uint8_t direction) {
                     break;
                 }
 
-                // 6秒超时保护（极端角度或丢失时不强制前进）
-                if (millis() - last_forward_time > 6000
+                // 满目标轮数 → 绕柱完成
+                if (forward_rounds >= max_rounds) {
+#ifdef CIRCLE_DEBUG
+                    Serial.print("[绕柱] 已完成");
+                    Serial.print(forward_rounds);
+                    Serial.println("轮前进，进入DONE");
+#endif
+                    circle_state = CircleState::DONE;
+                    break;
+                }
+
+                // 8秒超时保护
+                if (millis() - last_forward_time > 8000
                     && stable_angle > ANGLE_MIN_LIMIT
                     && stable_angle < ANGLE_MAX_LIMIT
                     && stable_width > 0) {
 #ifdef CIRCLE_DEBUG
-                    Serial.print("[绕柱] 调整超时6s，强制前进 总步数=");
-                    Serial.println(total_forward_steps + 1);
+                    Serial.print("[绕柱] 调整超时8s，强制前进 轮数=");
+                    Serial.println(forward_rounds + 1);
 #endif
                     last_forward_time = millis();
                     was_forward = true;
-                    total_forward_steps++;
-                    Controller.runActionGroup(FORWARD, 2);
+                    forward_rounds++;
+                    Controller.runActionGroup(FORWARD, 3);
                     circle_step_timer = millis();
                     step_in_progress = true;
                     slide_235_count = 0;
@@ -325,51 +400,12 @@ void circlePillar_update(uint8_t color_reg, uint8_t direction) {
                     break;
                 }
 
-                // 紧急避让：width>235 侧滑，最多连续2次
-                if (stable_width > 235) {
-                    slide_235_count++;
-                    if (slide_235_count > 2) {
-#ifdef CIRCLE_DEBUG
-                        Serial.print("[绕柱] 侧滑已达2次，强制前进 总步数=");
-                        Serial.println(total_forward_steps + 1);
-#endif
-                        slide_235_count = 0;
-                        was_forward = true;
-                        total_forward_steps++;
-                        Controller.runActionGroup(FORWARD, 2);
-                    } else {
-                        if (circle_direction == CIRCLE_LEFT) {
-#ifdef CIRCLE_DEBUG
-                            Serial.print("[绕柱] 紧急太近(");
-                            Serial.print(stable_width);
-                            Serial.print(") 侧滑第");
-                            Serial.print(slide_235_count);
-                            Serial.println("次");
-#endif
-                            Controller.runActionGroup(SLIDE_LEFT, 1);
-                        } else {
-#ifdef CIRCLE_DEBUG
-                            Serial.print("[绕柱] 紧急太近(");
-                            Serial.print(stable_width);
-                            Serial.print(") 侧滑第");
-                            Serial.print(slide_235_count);
-                            Serial.println("次");
-#endif
-                            Controller.runActionGroup(SLIDE_RIGHT, 1);
-                        }
-                    }
-                    circle_step_timer = millis();
-                    step_in_progress = true;
-                    break;
-                } else {
-                    slide_235_count = 0;
-                }
-
                 // 极端角度 + 目标丢失 → 根据最后色块坐标搜索
                 if ((stable_angle <= ANGLE_MIN_LIMIT || stable_angle >= ANGLE_MAX_LIMIT)
                     && stable_width == 0) {
                     uint8_t lx = get_last_x();
-                    bool turn_left = (lx < 120);  // 色块在左侧→左转，右侧→右转
+                    // x小(0~120)→目标在机器人右侧→应右转搜索；x大(120~240)→应左转搜索
+                    bool turn_left = (lx >= 120);
                     if (!big_turn_done) {
                         big_turn_done = true;
 #ifdef CIRCLE_DEBUG
@@ -384,7 +420,11 @@ void circlePillar_update(uint8_t color_reg, uint8_t direction) {
                         Serial.print(lx);
                         Serial.println(turn_left ? " 小步左转搜索" : " 小步右转搜索");
 #endif
-                        Controller.runActionGroup(turn_left ? TURN_LEFT_S : TURN_RIGHT_S, 2);
+                        if (turn_left) {
+                            Controller.runActionGroup(TURN_LEFT_S, 2);
+                        } else {
+                            Controller.runActionGroup(TURN_RIGHT_S, 3);
+                        }
                     }
                     circle_step_timer = millis();
                     step_in_progress = true;
@@ -408,7 +448,7 @@ void circlePillar_update(uint8_t color_reg, uint8_t direction) {
                         Serial.print(stable_angle);
                         Serial.println(")，小步右转");
 #endif
-                        Controller.runActionGroup(TURN_RIGHT_S, 2);
+                        Controller.runActionGroup(TURN_RIGHT_S, 3);
                     }
                     circle_step_timer = millis();
                     step_in_progress = true;
@@ -430,7 +470,7 @@ void circlePillar_update(uint8_t color_reg, uint8_t direction) {
                         Serial.print(stable_angle);
                         Serial.println(")，小步左转");
 #endif
-                        Controller.runActionGroup(TURN_LEFT_S, 1);
+                        Controller.runActionGroup(TURN_LEFT_S, 2);
                     }
                     circle_step_timer = millis();
                     step_in_progress = true;
@@ -440,22 +480,22 @@ void circlePillar_update(uint8_t color_reg, uint8_t direction) {
 
                 big_turn_done = false;
 
-                // 距离不对 → 小幅转向
+                // 距离不对 → 侧滑调整
                 if (stable_width > CIRCLING_WIDTH_MAX) {
                     if (circle_direction == CIRCLE_LEFT) {
 #ifdef CIRCLE_DEBUG
                         Serial.print("[绕柱] 太近(");
                         Serial.print(stable_width);
-                        Serial.println(")，小幅左转远离");
+                        Serial.println(")，左侧滑远离");
 #endif
-                        Controller.runActionGroup(TURN_LEFT_S, 1);
+                        Controller.runActionGroup(SLIDE_LEFT, 1);
                     } else {
 #ifdef CIRCLE_DEBUG
                         Serial.print("[绕柱] 太近(");
                         Serial.print(stable_width);
-                        Serial.println(")，小幅右转远离");
+                        Serial.println(")，右侧滑远离");
 #endif
-                        Controller.runActionGroup(TURN_RIGHT_S, 1);
+                        Controller.runActionGroup(SLIDE_RIGHT, 1);
                     }
                     circle_step_timer = millis();
                     step_in_progress = true;
@@ -467,16 +507,16 @@ void circlePillar_update(uint8_t color_reg, uint8_t direction) {
 #ifdef CIRCLE_DEBUG
                         Serial.print("[绕柱] 太远(");
                         Serial.print(stable_width);
-                        Serial.println(")，小幅右转靠近");
+                        Serial.println(")，右侧滑靠近");
 #endif
-                        Controller.runActionGroup(TURN_RIGHT_S, 1);
+                        Controller.runActionGroup(SLIDE_RIGHT, 1);
                     } else {
 #ifdef CIRCLE_DEBUG
                         Serial.print("[绕柱] 太远(");
                         Serial.print(stable_width);
-                        Serial.println(")，小幅左转靠近");
+                        Serial.println(")，左侧滑靠近");
 #endif
-                        Controller.runActionGroup(TURN_LEFT_S, 1);
+                        Controller.runActionGroup(SLIDE_LEFT, 1);
                     }
                     circle_step_timer = millis();
                     step_in_progress = true;
@@ -526,18 +566,19 @@ void circlePillar_update(uint8_t color_reg, uint8_t direction) {
 #ifdef CIRCLE_DEBUG
                 Serial.print("[绕柱] 前进 宽度=");
                 Serial.print(stable_width);
-                Serial.print(" 总步数=");
-                Serial.println(total_forward_steps);
+                Serial.print(" 轮数=");
+                Serial.println(forward_rounds + 1);
 #endif
                 last_forward_time = millis();
                 big_turn_done = false;
                 slide_235_count = 0;
                 was_forward = true;
-                Controller.runActionGroup(FORWARD, 2);
+                forward_rounds++;
+                Controller.runActionGroup(FORWARD, 3);
                 circle_step_timer = millis();
                 step_in_progress = true;
             } else {
-                unsigned long wait_time = extreme_recovery ? 3000 : STEP_DURATION;
+                unsigned long wait_time = extreme_recovery ? 3000 : (was_forward ? 3000 : STEP_DURATION);
                 if (millis() - circle_step_timer >= wait_time) {
                     step_in_progress = false;
                     if (extreme_recovery) {

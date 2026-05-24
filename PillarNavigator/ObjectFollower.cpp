@@ -25,7 +25,7 @@ extern LobotServoController Controller;
 #define RIGHT_BIAS 15
 
 // 物体宽度阈值：稳定大于此值视为已到达物体面前
-#define ARRIVED_WIDTH        230
+#define ARRIVED_WIDTH        220
 #define ARRIVED_STABLE_COUNT 3
 
 enum class FollowState {

@@ -6,7 +6,7 @@
 #define CIRCLE_LEFT  0
 #define CIRCLE_RIGHT 1
 
-void circlePillar_init();
+void circlePillar_init(int rounds = 6);
 
 /**
  * @brief 绕柱主更新函数（需在主循环中高频调用）
