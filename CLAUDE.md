@@ -25,30 +25,54 @@ All commands run from inside the project directory (`Esp32/` or `Esp32S3/`). In 
 - `main` — tested, competition-ready code
 - New features → branch from `develop`, PR back to `develop`
 
-## Current Status (2026-05-22)
+## Current Status (2026-05-26)
 
-**正在进行的任务：** `Esp32/src/main.cpp` 行走 + 形状识别集成测试
+**正在进行的任务：** 比赛状态机 + 3物体信标导航实现
 
-`main.cpp` 当前流程：
-1. 初始化舵机（Serial2, pins 16/17）→ 直立（动作组 0）
-2. 初始化激光雷达（Serial1, pins 32/33）→ 360° 扫描
-3. 前进 2 步（动作组 25）→ 停止 → 前方 ±45° 形状识别（球/正方体/圆柱体）
+### 场地布局
 
-**已知问题：**
+```
+总宽 = 2100mm，总深 = 4400mm，所有 500 宽区域均居中
+
+起点区(600×500) → 通道一(500×500) → 避障区(2100×1300) → 通道二(500×500)
+  → 大终点区(600×500) → 空区(500×500) → 置物台(1800×400, 高300)
+
+小起点: 200×200 居中于大起点区
+小终点: 200×200 居中于大终点区
+置物台上: 3物体(球φ200-300 / 正方体300³ / 圆柱φ300×300)，间距300mm
+标记区: 3个150×150胶带框，距置物台200mm
+
+识别区 = 通道二(500) + 大终点区(600) + 空区(500) + 置物台(400) = 2000mm深
+```
+
+### 传感器约束
+
+- **LiDAR 平面 > 300mm**：全场只能看到置物台上的 3 个物体
+- 柱子高 300mm → LiDAR 平面以下，扫不到（仅相机看颜色）
+- 置物台高 300mm → LiDAR 扫不到台面
+- 地上胶带/标记区(150×150) → 相机和 LiDAR 都看不到
+
+### 导航策略
+
+**核心思路：3 个物体从头到尾在 LiDAR 视野中，作为全程导航信标**
+
+| 阶段 | 传感器 | 方法 |
+|------|--------|------|
+| 通道一穿越 | IMU + LiDAR | 航向保持 + 3物体星座居中 |
+| 避障区绕柱 (Task 1) | 相机 | HeadTracker + ObjectFollower + CirclePillar |
+| 找通道二入口 | LiDAR | 原地旋转扫描 3 物体方向 |
+| 通道二穿越 | LiDAR | 3物体星座居中导航 |
+| 物体识别 (Task 2) | LiDAR | classifyObjectAt() 多次投票 |
+| 标记区导航+播报 (Task 3) | LiDAR + TTS | 以物体为参照接近到 200mm → ShapeVoicePlayer 3次 |
+
+### 已知问题
 
 | Issue | Severity | Status |
 |-------|----------|--------|
-| **TG1WDT_SYS_RESET** — `setup()` 中累计 `delay()` 超过 5 秒触发硬件看门狗复位 | 🔴 阻塞 | 未解决 |
-| Serial1/Serial2 端口冲突已修复（雷达→Serial1，舵机→Serial2）| 🟢 已解决 | ✅ |
-| LiDAR 坐标系映射：`HEADING_OFFSET=90`（雷达 90°=机器人 0°前方）| 🟢 已解决 | ✅ |
-| 形状分类阈值调优 — 1° 分辨率下 >400mm 球体/圆柱体难区分 | 🟡 已知限制 | 待场地实测 |
-
-**TG1WDT 已尝试方案：**
-1. `disableCore1WDT()` → 报错 "Failed to remove Core 1 IDLE task from WDT"，无效
-2. `wdt_config0.val = 0` 禁用硬件 WDT → 系统在 `lidar.begin()` 中彻底挂死
-3. `LidarDriver.cpp` 中 `waitMs()` 定期喂狗 → 仍复位，因为 `main.cpp setup()` 里的 `delay(2000)` 没换成喂狗
-
-**推荐修复方向：** 将 `main.cpp setup()` 中所有长 `delay()` 也换成 `waitMs()` 喂狗循环，或把初始化流程拆成非阻塞状态机。
+| **TG1WDT_SYS_RESET** — `setup()` 中累计 `delay()` 超过 5 秒触发硬件看门狗复位 | 🔴 阻塞 | 修复中 |
+| CirclePillar CIRCLING→DONE 无自动退出条件 | 🟡 已知 | 待修复 |
+| action group 不一致: ObjectFollower 用 25 forward, RobotTracking 用 21 | 🟡 已知 | 待场地确认 |
+| 形状分类阈值 — 1° 分辨率下 >400mm 球体/圆柱体难区分 | 🟡 已知 | 待场地实测 |
 
 ---
 
@@ -132,40 +156,66 @@ Esp32/src/              Esp32S3/src/
 
 ## Gap Analysis
 
-### Critical (P0) — 比赛状态机缺失
+### Critical (P0)
 
-`main.cpp` is currently a Lidar test program. Needs complete 3-task pipeline state machine.
+`main.cpp` is currently a LiDAR test program. Needs complete 3-task pipeline state machine with 3-object beacon navigation.
 
 | Priority | Module | What's needed |
 |----------|--------|---------------|
-| 🔴 P0 | **比赛状态机** | Top-level state machine sequencing Task1→2→3, with 5-min timeout per task |
-| 🔴 P0 | **S型绕桩 (Task 1)** | Use Lidar + CirclePillar to navigate S-curve around 2 cylinders in obstacle zone |
-| 🔴 P0 | **识别导航 (Task 2)** | After reaching end zone: read label → identify object → navigate to its mark area |
-| 🔴 P0 | **语音播报 (Task 3)** | Call ShapeVoicePlayer 3× when at the correct mark area |
-| 🟡 P1 | **通道导航** | Lidar centering algorithm to pass through 500×500mm channels |
-| 🟡 P1 | **碰撞规避** | Real-time Lidar monitoring to stop/slow before collision |
-| 🟡 P1 | **标签文字读取** | Read random text label shown by judge (S3 vision task) |
+| 🔴 P0 | **比赛状态机** | Top-level state machine: Task1(相机绕柱) → Task2(LiDAR识别) → Task3(标记区+播报) |
+| 🔴 P0 | **IMU yaw 暴露** | Add `get_yaw()` to Hiwonder.hpp, used for short heading holds |
+| 🔴 P0 | **3物体星座导航** | LiDAR detects 3 objects → compute center angle → steer to keep objects centered |
+| 🔴 P0 | **通道穿越** | IMU heading hold + 3-object constellation centering through 500×500 channels |
+| 🟡 P1 | **碰撞规避** | Real-time LiDAR front monitoring to stop before collision |
+| 🟡 P1 | **WDT-safe delay** | Replace all `delay()` in setup() with watchdog-feeding variant |
 | 🟢 P2 | **扣分计数** | Runtime tracking of collision/line-cross counts |
 
 ### Recommended order
 
-1. **Write competition state machine** in `main.cpp` — skeleton: Task1 → Task2 → Task3
-2. **S-curve navigation** — Lidar locates 2 pillars → CirclePillar around each
-3. **Channel navigation** — Lidar centering for 500×500 passages
-4. **Label reading + object matching** — S3 reads text label → matches to color/shape
-5. **Collision avoidance** — Real-time lidar guard
-6. **Field testing + parameter tuning** — Action group IDs, circling thresholds
+1. **Infrastructure** — arena.h constants, wdt_util.h (safeDelay), expose IMU yaw
+2. **3-object beacon navigation** — `nav_alignToObjects()`, `nav_findObjectsDirection()`, `nav_approachObject()`
+3. **State machine skeleton** — in `main.cpp`: Task1 → Task2 → Task3 with timeout guards
+4. **Channel crossing** — IMU heading hold + beacon centering
+5. **Pillar circling fix** — Add DONE exit condition to CirclePillar
+6. **Field testing + parameter tuning** — Action group IDs, circling thresholds, classifyObjectAt thresholds
+
+### Arena constants reference
+
+```cpp
+// arena.h — all in mm
+#define ARENA_TOTAL_DEPTH  4400  // 600+500+1300+500+600+500+400
+#define ARENA_TOTAL_WIDTH  2100
+#define NARROW_ZONE_WIDTH  500
+#define OBSTACLE_ZONE_DEPTH 1300
+#define RECOG_ZONE_DEPTH   2000  // channel2+end_zone+gnd_gap+platform
+#define CHANNEL_LENGTH     500
+#define PLATFORM_WIDTH     1800
+#define PLATFORM_DEPTH     400
+#define PLATFORM_HEIGHT    300
+#define OBJECT_SPACING     300   // center-to-center between objects on platform
+#define MARKER_OFFSET      200   // distance from platform to marker boxes
+#define MARKER_SIZE        150   // marker box side length
+#define START_BOX_SIZE     200   // small start/end box
+#define LARGE_ZONE_DEPTH   600   // large start/end zone depth
+#define LIDAR_SCAN_HEIGHT  300   // LiDAR plane is above this → only sees objects on platform
+```
 
 ### Key function reference (for writing the state machine)
 
 ```cpp
-// Lidar
+// LiDAR
 lidar.begin(rx, tx, motorPin);
 lidar.update();
 lidar.isScanComplete();
 lidar.findObjectInSector(startDeg, endDeg, maxDistMm);
 lidar.classifyObjectAt(angleDeg);      // 1=sphere, 2=cube, 3=cylinder
-lidar.isSectorClear(centerDeg, widthDeg, thresholdMm);
+lidar.sectorMin(centerDeg, widthDeg);  // min distance in sector
+
+// 3-object beacon navigation (new)
+nav_findObjectsDirection();      // rotate in place, scan for 3-object cluster
+nav_alignToObjects();             // compute center offset, return correction
+nav_approachObject(n, targetDist);// approach nth object to target distance
+nav_crossChannel();               // IMU heading hold + beacon centering through 500mm
 
 // Tracking
 circlePillar_init();
@@ -190,6 +240,10 @@ player.playSphere(); player.playCube(); player.playCylinder();
 // IMU
 imu.begin();
 imu.get_angle(&roll, &pitch);
+imu.get_yaw();  // new — for short heading holds (<5s)
+
+// WDT-safe delay
+safeDelay(ms);  // feeds TG1WDT during delay, use instead of delay()
 
 // Servo action groups (match hardware!)
 Controller.runActionGroup(groupId, times);

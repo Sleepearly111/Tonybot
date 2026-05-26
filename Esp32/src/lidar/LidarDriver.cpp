@@ -54,7 +54,7 @@ bool LidarDriver::begin(int rxPin, int txPin, int motorPin) {
     // 1. 初始化 Serial1 并启动电机
     // ——————————————————————————————————————————————
     Serial1.begin(115200, SERIAL_8N1, rxPin, txPin);
-    delay(100);
+    waitMs(100);
 
     Serial.println("[LIDAR] 启动电机...");
     digitalWrite(m_motorPin, HIGH);
@@ -71,9 +71,9 @@ bool LidarDriver::begin(int rxPin, int txPin, int motorPin) {
     // ⚠ 库的 begin() 内部调了 Serial1.begin(115200) → 引脚被重设回默认！
     //    必须重新配置成我们的引脚
     Serial1.end();
-    delay(10);
+    waitMs(10);
     Serial1.begin(115200, SERIAL_8N1, rxPin, txPin);
-    delay(100);
+    waitMs(100);
     while (Serial1.available()) Serial1.read();  // 清干净
 
     // ——————————————————————————————————————————————
@@ -97,7 +97,7 @@ bool LidarDriver::begin(int rxPin, int txPin, int motorPin) {
     // ——————————————————————————————————————————————
     // 4. 启动扫描
     // ——————————————————————————————————————————————
-    delay(100);
+    waitMs(100);
     while (Serial1.available()) Serial1.read();
 
     result = m_lidar.startScan();
@@ -170,9 +170,9 @@ bool LidarDriver::update() {
         Serial.println("[LIDAR] 看门狗超时，尝试重连...");
         m_connected = false;
         digitalWrite(m_motorPin, LOW);
-        delay(500);
+        waitMs(500);
         digitalWrite(m_motorPin, HIGH);
-        delay(1000);
+        waitMs(1000);
         m_lidar.startScan();
         m_lastPointMs = millis();
         m_connected = true;

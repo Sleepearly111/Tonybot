@@ -1,11 +1,10 @@
 #include <Arduino.h>
 #include "lidar/LidarDriver.h"
 #include "LobotServoController.h"
-#include "soc/timer_group_struct.h"
-#include "soc/timer_group_reg.h"
+#include "wdt_util.h"
 
 // ============================================================
-// A1M8 激光雷达引脚
+// 引脚
 // ============================================================
 #define PIN_LIDAR_RX     32
 #define PIN_LIDAR_TX     33
@@ -14,27 +13,12 @@
 LidarDriver lidar;
 extern LobotServoController Controller;
 
-// ============================================================
-// 行走测试阶段
-// ============================================================
-enum WalkPhase { WALK_INIT, WALK_GOING, WALK_DONE };
-static WalkPhase phase = WALK_INIT;
-static unsigned long phaseTimer = 0;
-
-// 角度偏移：雷达安装偏右 90°
-// 机器人 0°(前方) = 雷达 90°(右方)
+// A1M8 安装偏移：雷达 90° = 机器人 0°（前方）
 #define HEADING_OFFSET  90
 
-// 雷达坐标系 ↔ 机器人坐标系
 static int toRobot(int lidarDeg) { return (lidarDeg - HEADING_OFFSET + 360) % 360; }
 static int toLidar(int robotDeg) { return (robotDeg + HEADING_OFFSET) % 360; }
-
-// 机器人坐标系下的 Lidar 查询封装
-static int robotFindNearest(int rStart, int rEnd) {
-    int result = lidar.findNearest(toLidar(rStart), toLidar(rEnd));
-    return (result >= 0) ? toRobot(result) : -1;
-}
-static float robotDistanceAt(int rDeg) { return lidar.distanceAt(toLidar(rDeg)); }
+static float robotDistAt(int rDeg) { return lidar.distanceAt(toLidar(rDeg)); }
 
 static const char* shapeName(uint8_t id) {
     switch (id) {
@@ -48,105 +32,100 @@ static const char* shapeName(uint8_t id) {
 // ============================================================
 void setup() {
     Serial.begin(115200);
-
-    // 喂狗（保留硬件看门狗，避免系统真正挂死时无法恢复）
-    TIMERG1.wdt_wprotect = TIMG_WDT_WKEY_VALUE;
-    TIMERG1.wdt_feed = 1;
-    TIMERG1.wdt_wprotect = 0;
-    delay(500);
+    safeDelay(500);
     Serial.println("\n========================================");
-    Serial.println("  行走 + 形状识别测试");
+    Serial.println("  形状识别测试");
     Serial.println("========================================\n");
 
-    Serial.println("[PHASE] 初始化舵机控制器...");
-    Serial2.begin(115200, SERIAL_8N1, 16, 17);  // 舵机总线  RX=16 TX=17
-    delay(100);
-    Controller.runActionGroup(0, 1);  // 先直立
-    delay(2000);  // 等直立完成
+    // 舵机初始化 → 直立
+    Serial.println("[INIT] 舵机直立...");
+    Serial2.begin(115200, SERIAL_8N1, 16, 17);
+    safeDelay(100);
+    Controller.runActionGroup(0, 1);  // stand
+    safeDelay(2000);
 
-    // 进雷达初始化前再喂一次狗，避免内部长 delay 超时
-    TIMERG1.wdt_wprotect = TIMG_WDT_WKEY_VALUE;
-    TIMERG1.wdt_feed = 1;
-    TIMERG1.wdt_wprotect = 0;
-
+    // LiDAR
+    Serial.println("[INIT] 激光雷达...");
     if (!lidar.begin(PIN_LIDAR_RX, PIN_LIDAR_TX, PIN_LIDAR_MOTOR)) {
-        Serial.println("[FATAL] 雷达初始化失败！检查接线和供电。");
-        while (1) delay(1000);
+        Serial.println("[FATAL] 雷达初始化失败");
+        while (1) safeDelay(1000);
     }
-    Serial.println("[OK] 激光雷达已就绪\n");
-
-    // 开始行走测试
-    Serial.println("[PHASE] 前进 2 步...");
-    Controller.runActionGroup(25, 2);  // 25=forward, 走2步
-    phase = WALK_GOING;
-    phaseTimer = millis();
+    Serial.println("[OK] 雷达就绪\n");
+    Serial.println("========================================");
+    Serial.println("  等待物体放置在置物台上...");
+    Serial.println("  每 3 秒扫描一次前方物体");
+    Serial.println("========================================\n");
 }
 
-static unsigned long lastPrintMs = 0;
+// ============================================================
+// 在前方扇形区域找物体，返回找到的数量和角度
+// ============================================================
+static int findObjects(int* outAngles, int maxObj, int sectorW = 60) {
+    int found = 0;
+    for (int i = 0; i <= 2 * sectorW; i++) {
+        int degL = toLidar(360 - sectorW + i);
+        float d = lidar.distanceAt(degL);
+        // 只看 100~2000mm 范围内的有效回波
+        if (d < 100 || d > 2000) continue;
+
+        // 检查是否是新物体的开始（与前一点间距 > 5° 或距离突变）
+        if (found == 0) {
+            outAngles[found++] = toRobot(degL);
+        } else {
+            int prevL = toLidar(outAngles[found - 1]);
+            float prevD = lidar.distanceAt(prevL);
+            int gap = (degL - prevL + 360) % 360;
+            if (gap > 8 || fabs(d - prevD) > 300) {
+                if (found < maxObj) {
+                    outAngles[found++] = toRobot(degL);
+                }
+            }
+        }
+    }
+    return found;
+}
 
 // ============================================================
+static unsigned long lastPrintMs = 0;
+
 void loop() {
     lidar.update();
-
-    // — 行走阶段：等 3 秒让动作组执行完 —
-    if (phase == WALK_GOING) {
-        if (millis() - phaseTimer >= 3000) {
-            Serial.println("[PHASE] 停止，直立");
-            Controller.runActionGroup(0, 1);  // 立正
-            phase = WALK_DONE;
-            phaseTimer = millis();
-            Serial.println("[PHASE] 行走完成，开始形状识别\n");
-        }
-        return;  // 行走阶段不做雷达识别
-    }
-
-    // 行走完成后停 1 秒再开始识别
-    if (phase == WALK_DONE) {
-        if (millis() - phaseTimer < 1000) return;
-        phase = WALK_DONE;  // 保持，跳过这个 if
-    }
 
     if (!lidar.isScanComplete()) return;
     lidar.resetScanFlag();
 
-    // 每 2 秒报告一次
-    if (millis() - lastPrintMs < 2000) return;
+    if (millis() - lastPrintMs < 3000) return;
     lastPrintMs = millis();
 
-    // ---- 前方 ±45° 范围内找物体 ----
-    const int SECTOR_W = 45;
-    int objDeg = robotFindNearest(360 - SECTOR_W, SECTOR_W);
+    // 扫描前方 ±60°
+    int angles[8];
+    int n = findObjects(angles, 8, 60);
 
     Serial.print("-------- ");
     Serial.print(millis() / 1000);
-    Serial.println("s --------");
+    Serial.print("s  (检测到 ");
+    Serial.print(n);
+    Serial.println(" 个物体) --------");
 
-    if (objDeg < 0) {
-        Serial.println("[前方] 未检测到物体");
-        float dF = robotDistanceAt(0);
-        float dL = robotDistanceAt(30);
-        float dR = robotDistanceAt(330);
-        Serial.printf("[前方] 0°=%.0fmm  左30°=%.0fmm  右30°=%.0fmm\n", dF, dL, dR);
-        Serial.println();
-        return;
+    for (int i = 0; i < n; i++) {
+        float dist = robotDistAt(angles[i]);
+        LidarDriver::ShapeInfo info;
+        int shape = lidar.classifyObjectAt(toLidar(angles[i]), &info);
+
+        const char* side = (angles[i] < 0) ? "左" : "右";
+        Serial.printf("  [%s侧] 角度=%d°  距离=%.0fmm  形状=%s\n",
+                      side, abs(angles[i]), dist, shapeName(shape));
+        Serial.printf("         span=%d°  std=%.1fmm  边缘陡峭=%s\n",
+                      info.angularSpan, info.distStddev,
+                      info.sharpEdges ? "Y" : "N");
     }
 
-    float dist = robotDistanceAt(objDeg);
-    Serial.printf("[物体] 角度=%d°  距离=%.0fmm\n", objDeg, dist);
-
-    if (dist > 1500) {
-        Serial.println("[跳过] 距离 > 1.5m，太远不分类\n");
-        return;
+    if (n == 0) {
+        Serial.println("  (前方无物体)");
+        // 输出几个关键角度的原始距离帮助调参
+        Serial.printf("  [原始] 0°=%.0f  -30°=%.0f  30°=%.0f  -60°=%.0f  60°=%.0f\n",
+                      robotDistAt(0), robotDistAt(-30), robotDistAt(30),
+                      robotDistAt(-60), robotDistAt(60));
     }
-
-    // ---- 形状分类 ----
-    LidarDriver::ShapeInfo info;
-    int shape = lidar.classifyObjectAt(toLidar(objDeg), &info);
-
-    Serial.printf("[形状] %s  span=%d°  std=%.1fmm  边缘陡峭=%s\n",
-                  shapeName(shape), info.angularSpan, info.distStddev,
-                  info.sharpEdges ? "Y" : "N");
-    Serial.printf("[细节] 中心角=%d°  最近=%.0fmm  最远=%.0fmm\n",
-                  info.centerAngle, info.minDist, info.maxDist);
     Serial.println();
 }

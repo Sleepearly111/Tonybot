@@ -29,3 +29,8 @@ void IMU::get_angle(float* roll , float* pitch)
   *roll = filter.getRoll();
   *pitch = filter.getPitch();
 }
+
+float IMU::get_yaw()
+{
+  return filter.getYaw();
+}
