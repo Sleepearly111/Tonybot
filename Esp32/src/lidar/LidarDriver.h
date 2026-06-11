@@ -48,6 +48,9 @@ public:
     // === 调试输出 ===
     void printSummary();
     void printPolarPlot();
+    // 流式输出完整一圈扫描数据（给 PC 端 lidar_viewer.py 读取）
+    // 格式: SCAN <ts> <count>\n<angle> <dist> <quality>\n... END
+    void printScanStream();
 
     // === 形状识别（激光雷达方案）===
     // 在扇形区域中找到最近的物体，返回其中心角度（-1=无物体）

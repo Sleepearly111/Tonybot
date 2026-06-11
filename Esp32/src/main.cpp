@@ -4,6 +4,11 @@
 #include "wdt_util.h"
 
 // ============================================================
+// 模式切换 — 注释掉下面这行切回形状测试模式
+// ============================================================
+#define LIDAR_STREAM_MODE    // 串口流式输出 → PC端 lidar_viewer.py 可视化
+
+// ============================================================
 // 引脚
 // ============================================================
 #define PIN_LIDAR_RX     32
@@ -33,9 +38,16 @@ static const char* shapeName(uint8_t id) {
 void setup() {
     Serial.begin(115200);
     safeDelay(500);
+
+#ifdef LIDAR_STREAM_MODE
+    Serial.println("\n========== LiDAR STREAM MODE ==========");
+    Serial.println("  运行: python tools/lidar_viewer.py <COM口>");
+    Serial.println("========================================");
+#else
     Serial.println("\n========================================");
     Serial.println("  形状识别测试");
     Serial.println("========================================\n");
+#endif
 
     // 舵机初始化 → 直立
     Serial.println("[INIT] 舵机直立...");
@@ -51,24 +63,33 @@ void setup() {
         while (1) safeDelay(1000);
     }
     Serial.println("[OK] 雷达就绪\n");
-    Serial.println("========================================");
-    Serial.println("  等待物体放置在置物台上...");
-    Serial.println("  每 3 秒扫描一次前方物体");
-    Serial.println("========================================\n");
 }
 
 // ============================================================
+#ifdef LIDAR_STREAM_MODE
+
+// === 流式输出模式 ===
+void loop() {
+    lidar.update();
+
+    if (lidar.isScanComplete()) {
+        lidar.resetScanFlag();
+        lidar.printScanStream();
+    }
+}
+
+#else
+
+// === 形状识别测试模式 ===
+
 // 在前方扇形区域找物体，返回找到的数量和角度
-// ============================================================
 static int findObjects(int* outAngles, int maxObj, int sectorW = 60) {
     int found = 0;
     for (int i = 0; i <= 2 * sectorW; i++) {
         int degL = toLidar(360 - sectorW + i);
         float d = lidar.distanceAt(degL);
-        // 只看 100~2000mm 范围内的有效回波
         if (d < 100 || d > 2000) continue;
 
-        // 检查是否是新物体的开始（与前一点间距 > 5° 或距离突变）
         if (found == 0) {
             outAngles[found++] = toRobot(degL);
         } else {
@@ -85,7 +106,6 @@ static int findObjects(int* outAngles, int maxObj, int sectorW = 60) {
     return found;
 }
 
-// ============================================================
 static unsigned long lastPrintMs = 0;
 
 void loop() {
@@ -122,10 +142,11 @@ void loop() {
 
     if (n == 0) {
         Serial.println("  (前方无物体)");
-        // 输出几个关键角度的原始距离帮助调参
         Serial.printf("  [原始] 0°=%.0f  -30°=%.0f  30°=%.0f  -60°=%.0f  60°=%.0f\n",
                       robotDistAt(0), robotDistAt(-30), robotDistAt(30),
                       robotDistAt(-60), robotDistAt(60));
     }
     Serial.println();
 }
+
+#endif

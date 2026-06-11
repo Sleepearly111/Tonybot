@@ -2,6 +2,51 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Developer Identity
+
+本项目（Tonybot CRAIC 2026 比赛机器人）有两个开发者，**每次对话开始时先确认当前是谁**，再按对应角色工作。
+
+### 同学A（PlatformIO）
+
+- **身份**：主程，ESP32 端负责人
+- **工具**：VS Code + PlatformIO
+- **负责目录**：`Esp32/`、`Esp32S3/`、`tools/`
+- **权限**：可以创建/修改/删除 `Esp32/` 和 `Esp32S3/` 下的任何文件；可以在项目根目录创建调试工具和脚本；可以修改 CLAUDE.md 和 README.md
+- **不能动**：`PillarNavigator/` 和 `ESP32S3Cam/`（同学B 的 Arduino IDE 原版代码）
+- **技术栈**：C++ (Arduino framework, ESP32, FreeRTOS), Python (PC 端调试工具)
+
+### 同学B（Arduino IDE）
+
+- **身份**：LiDAR 算法负责人（终点区定位、识别区导航、物体识别）
+- **工具**：Arduino IDE
+- **负责目录**：`LiDARTest/`（LiDAR 模块开发+测试）、`PillarNavigator/`（已完成，仅保留）、`ESP32S3Cam/`（已完成，仅保留）
+- **权限**：可以创建/修改/删除 `LiDARTest/` 下的文件；可以在项目根目录创建 Arduino 测试项目
+- **不能动**：`Esp32/` 和 `Esp32S3/`（同学A 的 PlatformIO 代码）
+- **技术栈**：C++ (Arduino framework, ESP32), Arduino 库管理
+- **注意**：不熟悉 `pio` 命令，所有编译上传在 Arduino IDE 里完成；写好的 LiDAR 算法最终由 A 集成到 `Esp32/src/`
+
+### 共享资源
+
+- `CLAUDE.md`、`README.md` — 两人都可以更新
+- `tools/lidar_viewer.py` — PC 端 LiDAR 可视化工具，两人通用
+- LiDAR 流式协议 (`SCAN ... END`) — 跨平台，`lidar_viewer.py` 解析
+- I2C 协议 (ESP32-S3 ↔ ESP32) — A 的 `Esp32/src/hw_esp32cam_ctl.*` 和 B 的 S3 代码之间的接口
+
+### B 的 LiDAR 开发环境 (`LiDARTest/`)
+
+```
+LiDARTest/
+├── LiDARTest.ino            ← setup/loop，调各模块
+├── lidar_common.h/.cpp      ← 雷达初始化 + 数据采集 (g_map[360])
+├── lidar_endzone.h/.cpp     ← 终点区定位 [TODO: B]
+├── lidar_navigate.h/.cpp    ← 识别区导航 [TODO: B]
+├── lidar_classify.h/.cpp    ← 物体形状识别 [Done, 待实测调参]
+├── RPLidar.h + .cpp         ← RoboPeak 雷达驱动
+└── inc/                     ← 底层协议头文件
+```
+
+B 的 loop() 里注释掉模块调用即可测试：依次取消 `lidar_isAtEndZone()`、`lidar_nav_toPlatform()`、`classifyObject()` 的注释。
+
 ## Commands
 
 This is a **PlatformIO** project with two independent targets: `Esp32/` (main controller) and `Esp32S3/` (vision coprocessor).
@@ -25,9 +70,11 @@ All commands run from inside the project directory (`Esp32/` or `Esp32S3/`). In 
 - `main` — tested, competition-ready code
 - New features → branch from `develop`, PR back to `develop`
 
-## Current Status (2026-05-26)
+## Current Status (2026-06-11)
 
-**正在进行的任务：** 比赛状态机 + 3物体信标导航实现
+**分工**：A 负责比赛状态机 + `Esp32/` PlatformIO 集成；B 负责 `LiDARTest/` 中三个 LiDAR 模块的算法开发
+
+**B 进度**：雷达硬件已接通，`lidar_classify.cpp` 算法已从 A 移植，`lidar_endzone.cpp` 和 `lidar_navigate.cpp` 待 B 实现
 
 ### 场地布局
 
@@ -40,6 +87,8 @@ All commands run from inside the project directory (`Esp32/` or `Esp32S3/`). In 
 小起点: 200×200 居中于大起点区
 小终点: 200×200 居中于大终点区
 置物台上: 3物体(球φ200-300 / 正方体300³ / 圆柱φ300×300)，间距300mm
+避障区内: 2根圆柱障碍物(红/蓝各一，直径300，高300)
+标签: A4纸印"球体""正方体""圆柱体"，大小180mm，终点区展示
 标记区: 3个150×150胶带框，距置物台200mm
 
 识别区 = 通道二(500) + 大终点区(600) + 空区(500) + 置物台(400) = 2000mm深
@@ -54,25 +103,24 @@ All commands run from inside the project directory (`Esp32/` or `Esp32S3/`). In 
 
 ### 导航策略
 
-**核心思路：3 个物体从头到尾在 LiDAR 视野中，作为全程导航信标**
+**核心思路：3 个物体从头到尾在 LiDAR 视野中，作为全程导航信标；终点区汉字标签决定识别目标**
 
 | 阶段 | 传感器 | 方法 |
 |------|--------|------|
 | 通道一穿越 | IMU + LiDAR | 航向保持 + 3物体星座居中 |
-| 避障区绕柱 (Task 1) | 相机 | HeadTracker + ObjectFollower + CirclePillar |
+| 避障区绕柱 (Task 1) | 相机 | HeadTracker + ObjectFollower + CirclePillar（S型绕行，左右方向裁判现场指定） |
 | 找通道二入口 | LiDAR | 原地旋转扫描 3 物体方向 |
 | 通道二穿越 | LiDAR | 3物体星座居中导航 |
-| 物体识别 (Task 2) | LiDAR | classifyObjectAt() 多次投票 |
-| 标记区导航+播报 (Task 3) | LiDAR + TTS | 以物体为参照接近到 200mm → ShapeVoicePlayer 3次 |
+| 终点区标签识别 | 相机(S3 AI) | 到终点区暂停 → S3识别A4纸汉字标签（球体/正方体/圆柱体）→ 确定需要识别的物体 |
+| 物体定位 (Task 2) | LiDAR | 根据标签结果，classifyObjectAt() 多次投票识别台上对应物体 |
+| 标记区导航+播报 (Task 3) | LiDAR + TTS | 以物体为参照接近到 200mm → ShapeVoicePlayer 播报3次（"我是Tonybot，我识别到的是XXX，XXX，XXX"） |
 
 ### 已知问题
 
 | Issue | Severity | Status |
 |-------|----------|--------|
-| **TG1WDT_SYS_RESET** — `setup()` 中累计 `delay()` 超过 5 秒触发硬件看门狗复位 | 🔴 阻塞 | 修复中 |
 | CirclePillar CIRCLING→DONE 无自动退出条件 | 🟡 已知 | 待修复 |
 | action group 不一致: ObjectFollower 用 25 forward, RobotTracking 用 21 | 🟡 已知 | 待场地确认 |
-| 形状分类阈值 — 1° 分辨率下 >400mm 球体/圆柱体难区分 | 🟡 已知 | 待场地实测 |
 
 ---
 
@@ -106,8 +154,8 @@ ESP32-S3 (slave 0x52)                  ESP32 (master)
        0x00 = red block data           ├─ I2C     → TTS module (0x40)
        0x01 = green block data         └─ I2C     → ASR module (0x34)
        0x02 = blue block data
-       0x10 = AI label result
-       0x20 = AI shape result
+       0x10 = AI label result (0x11=球体, 0x12=正方体, 0x13=圆柱体, 0=none)
+       0x20 = AI shape result  (1=球体, 2=正方体, 3=圆柱体, 0=none)
 ```
 
 ### Source layout
@@ -151,33 +199,29 @@ Esp32/src/              Esp32S3/src/
 | **RobotTracking** | ✅ Done | PID visual tracking (head servo + leg action groups) |
 | **TTS/ASR + ShapeVoicePlayer** | ✅ Done | Voice synthesis + recognition; announces object name 3× |
 | **ESP32Cam I2C** | ✅ Done | I2C master comms with S3 slave |
-| **ESP32-S3 Vision** | ✅ Done | Camera + HSV detection + AI inference |
+| **ESP32-S3 Vision** | ✅ Done | Camera + HSV detection + AI inference (汉字分类: 球体/正方体/圆柱体) |
 | **Servo drivers** | ✅ Done | PWM (LEDC) + Lobot serial bus servo protocols |
 
 ## Gap Analysis
 
-### Critical (P0)
+### A 待办 (Esp32/ PlatformIO)
 
-`main.cpp` is currently a LiDAR test program. Needs complete 3-task pipeline state machine with 3-object beacon navigation.
+| Priority | 模块 | 说明 |
+|----------|------|------|
+| 🔴 P0 | **比赛状态机** | `main.cpp`: Task1(相机绕柱) → Task2(读I2C标签→调B的LiDAR算法识别) → Task3(标记区+播报)，带超时保护 |
+| 🔴 P0 | **集成B的LiDAR算法** | B 在 `LiDARTest/` 写好后，A 移植到 `Esp32/src/lidar/` 或调用 B 的接口 |
+| 🟡 P1 | **CirclePillar DONE** | 加自动退出条件 |
+| 🟡 P1 | **碰撞规避** | 实时 LiDAR 前方监测，碰撞前刹车 |
+| 🟢 P2 | **扣分计数** | 运行时记录碰撞/压线次数 |
 
-| Priority | Module | What's needed |
-|----------|--------|---------------|
-| 🔴 P0 | **比赛状态机** | Top-level state machine: Task1(相机绕柱) → Task2(LiDAR识别) → Task3(标记区+播报) |
-| 🔴 P0 | **IMU yaw 暴露** | Add `get_yaw()` to Hiwonder.hpp, used for short heading holds |
-| 🔴 P0 | **3物体星座导航** | LiDAR detects 3 objects → compute center angle → steer to keep objects centered |
-| 🔴 P0 | **通道穿越** | IMU heading hold + 3-object constellation centering through 500×500 channels |
-| 🟡 P1 | **碰撞规避** | Real-time LiDAR front monitoring to stop before collision |
-| 🟡 P1 | **WDT-safe delay** | Replace all `delay()` in setup() with watchdog-feeding variant |
-| 🟢 P2 | **扣分计数** | Runtime tracking of collision/line-cross counts |
+### B 待办 (LiDARTest/ Arduino IDE)
 
-### Recommended order
-
-1. **Infrastructure** — arena.h constants, wdt_util.h (safeDelay), expose IMU yaw
-2. **3-object beacon navigation** — `nav_alignToObjects()`, `nav_findObjectsDirection()`, `nav_approachObject()`
-3. **State machine skeleton** — in `main.cpp`: Task1 → Task2 → Task3 with timeout guards
-4. **Channel crossing** — IMU heading hold + beacon centering
-5. **Pillar circling fix** — Add DONE exit condition to CirclePillar
-6. **Field testing + parameter tuning** — Action group IDs, circling thresholds, classifyObjectAt thresholds
+| Priority | 模块 | 文件 | 说明 |
+|----------|------|------|------|
+| 🔴 P0 | **终点区定位** | `lidar_endzone.cpp` | 判断穿过通道二后到达终点区 |
+| 🔴 P0 | **识别区导航** | `lidar_navigate.cpp` | 以3物体为信标导航到置物台前200mm |
+| 🟡 P1 | **物体识别实测** | `lidar_classify.cpp` | 用可视化工具实测调阈值 |
+| 🟡 P1 | **3物体检测** | `lidar_navigate.cpp` 里 `lidar_findObjects()` | 在g_map[]中找出3个物体 |
 
 ### Arena constants reference
 
@@ -200,54 +244,55 @@ Esp32/src/              Esp32S3/src/
 #define LIDAR_SCAN_HEIGHT  300   // LiDAR plane is above this → only sees objects on platform
 ```
 
-### Key function reference (for writing the state machine)
+### Key function reference
 
 ```cpp
-// LiDAR
+// ============ A: Esp32/src/lidar/LidarDriver (PlatformIO) ============
 lidar.begin(rx, tx, motorPin);
-lidar.update();
+lidar.update();                           // 每帧一个扫描点
 lidar.isScanComplete();
-lidar.findObjectInSector(startDeg, endDeg, maxDistMm);
-lidar.classifyObjectAt(angleDeg);      // 1=sphere, 2=cube, 3=cylinder
-lidar.sectorMin(centerDeg, widthDeg);  // min distance in sector
+lidar.printScanStream();                  // 流式输出 SCAN...END（给可视化工具）
+lidar.findObjectInSector(start, end, maxDist);
+lidar.classifyObjectAt(angleDeg);         // 1=sphere 2=cube 3=cylinder
+lidar.sectorMin(centerDeg, widthDeg);
+lidar.distanceAt(deg);
 
-// 3-object beacon navigation (new)
-nav_findObjectsDirection();      // rotate in place, scan for 3-object cluster
-nav_alignToObjects();             // compute center offset, return correction
-nav_approachObject(n, targetDist);// approach nth object to target distance
-nav_crossChannel();               // IMU heading hold + beacon centering through 500mm
+// ============ B: LiDARTest/ (Arduino IDE) ============
+lidar_init();                             // 初始化雷达 + 开始扫描
+lidar_update();                           // 每帧一个点 → g_map[360]
+lidar_streamScan();                       // 流式输出
+lidar_isAtEndZone();                      // 终点区判定 [TODO]
+lidar_nav_toPlatform();                   // 导航到置物台前 [TODO]
+lidar_findObjects(outAngles);             // 找3个物体 [TODO]
+classifyObject(angleDeg, &info);          // 形状识别 [Done]
 
-// Tracking
-circlePillar_init();
-circlePillar_update(color_reg, CIRCLE_LEFT|CIRCLE_RIGHT);
-circlePillar_isDone();
-objectFollower_init();
-objectFollower_update(color_reg, deadband);
-tracker_init();
+// ============ 可视化 ============
+// python tools/lidar_viewer.py COM3           实时显示
+// python tools/lidar_viewer.py COM3 --record  录制日志
+
+// ============ S3 AI label recognition ============
+cam.begin();
+uint8_t label = cam.readAILabel();        // 0x11=球体 0x12=正方体 0x13=圆柱体
+
+// ============ Tracking ============
+circlePillar_init() / _update() / _isDone();
+objectFollower_init() / _update();
 tracker_set_color(TRACK_COLOR_RED|TRACK_COLOR_BLUE);
-tracker_update();
 
-// Fall detection
-fallDetector_init();
-fallDetector_update();
-fallDetector_isRecovering();
-tumble();
-
-// Voice
+// ============ Voice ============
 ShapeVoicePlayer player;
 player.playSphere(); player.playCube(); player.playCylinder();
 
-// IMU
+// ============ IMU ============
 imu.begin();
 imu.get_angle(&roll, &pitch);
-imu.get_yaw();  // new — for short heading holds (<5s)
+imu.get_yaw();
 
-// WDT-safe delay
-safeDelay(ms);  // feeds TG1WDT during delay, use instead of delay()
+// ============ WDT-safe delay ============
+safeDelay(ms);
 
-// Servo action groups (match hardware!)
+// ============ Servo ============
 Controller.runActionGroup(groupId, times);
 // 101=back-stand  102=front-stand  11=slide-left  12=slide-right
-// 23=turn-left    24=turn-right    25=forward     3=small-left
-// 4=small-right   0=stand         19=quick-stand
+// 23=turn-left    24=turn-right    25=forward     0=stand
 ```

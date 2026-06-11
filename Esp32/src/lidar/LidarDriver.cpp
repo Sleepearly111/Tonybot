@@ -497,6 +497,29 @@ int LidarDriver::classifyObjectAt(int angleDeg, ShapeInfo* info) {
     return info->shapeType;
 }
 
+// ============================================================
+// printScanStream() — 流式输出完整一圈扫描
+// 格式: SCAN <ts> <count>\n<angle> <dist> <quality>\n... END
+// PC 端用 tools/lidar_viewer.py <COM> 读取并可视化
+// ============================================================
+void LidarDriver::printScanStream() {
+    // 统计有效点数
+    int valid = 0;
+    for (int i = 0; i < LIDAR_MAP_SIZE; i++) {
+        if (m_map[i] > 0) valid++;
+    }
+
+    Serial.printf("SCAN %lu %d\n", millis(), valid);
+
+    for (int i = 0; i < LIDAR_MAP_SIZE; i++) {
+        if (m_map[i] > 0) {
+            Serial.printf("%d %.0f %d\n", i, m_map[i], m_quality[i]);
+        }
+    }
+
+    Serial.println("END");
+}
+
 void LidarDriver::printPolarPlot() {
     Serial.println("[LIDAR] 极坐标图 (前方0° 顺时针):");
     for (int deg = 0; deg < 360; deg += 15) {

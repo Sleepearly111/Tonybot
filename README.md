@@ -1,11 +1,16 @@
 # Tonybot — 竞赛机器人代码
 
-本仓库包含 Tonybot 机器人两套方案的代码：主控（ESP32）和视觉协处理器（ESP32-S3），使用 **PlatformIO + VS Code** 开发。
+CRAIC 2026 具身智能任务赛，双人协作开发。
+
+| 角色 | 工具 | 负责 |
+|------|------|------|
+| **同学A** | VS Code + PlatformIO | `Esp32/`、`Esp32S3/`（主控+视觉）、`tools/`（调试工具） |
+| **同学B** | Arduino IDE | `PillarNavigator/`、`ESP32S3Cam/`（绕柱+视觉原版）、`LiDARTest/`（雷达测试） |
 
 ## 仓库结构
 
 ```
-├── Esp32/                    # [主控] PlatformIO 项目
+├── Esp32/                    # [同学A] 主控 PlatformIO 项目
 │   ├── src/                  # 源代码
 │   │   ├── main.cpp          # 主程序入口
 │   │   ├── globals.cpp       # 全局对象定义（Controller, hwsensor, sonarServo, imu）
@@ -38,7 +43,7 @@
 │   ├── platformio.ini        # 项目配置
 │   └── fix_rplidar.py        # RPLIDAR 兼容性修复脚本
 │
-├── Esp32S3/                  # [视觉] PlatformIO 项目
+├── Esp32S3/                  # [同学A] 视觉 PlatformIO 项目
 │   ├── src/
 │   │   ├── main.cpp          # 主程序入口（AI 标签识别 + I2C 发送）
 │   │   ├── camera_setting.*  # 摄像头配置
@@ -50,8 +55,10 @@
 │   ├── platformio.ini        # 项目配置
 │   └── ...
 │
-├── PillarNavigator/          # [保留] 同学 Arduino IDE 原版代码
-├── ESP32S3Cam/               # [保留] 同学 Arduino IDE 原版代码
+├── PillarNavigator/          # [同学B] Arduino IDE 绕柱原版
+├── ESP32S3Cam/               # [同学B] Arduino IDE 视觉原版
+├── LiDARTest/                # [同学B] Arduino IDE 雷达独立测试
+├── tools/                    # [共享] PC端调试工具 (lidar_viewer.py)
 └── README.md                 # 本文件
 ```
 
@@ -71,7 +78,7 @@
 ```
 
 - **ESP32** (主控): 舵机控制、激光雷达、IMU 跌倒检测、导航逻辑、TTS/ASR 语音
-- **ESP32-S3** (视觉): 摄像头、AI 物体识别、HSV 颜色检测，通过 I2C 把结果发给 ESP32
+- **ESP32-S3** (视觉): 摄像头、**汉字标签分类**（球体/正方体/圆柱体）、HSV 颜色检测，通过 I2C 把结果发给 ESP32
 
 ### I2C 设备（GPIO22/23）
 
@@ -172,48 +179,68 @@ git push origin develop
 
 ## 比赛概述
 
-CRAIC 2026 具身智能任务赛。机器人从起点出发自主完成 3 个连续任务：
+CRAIC 2026 具身智能任务赛。机器人从起点出发自主完成 3 个连续任务（避障→识别→播报），全程无遥控。
 
 ### 场地布局
 
 ```
 总宽 = 2100mm，总深 = 4400mm
 
-起点区(600×500) → 通道一(500×500) → 避障区(2100×1300, 2根柱子)
+起点区(600×500) → 通道一(500×500) → 避障区(2100×1300, 红蓝2根柱子)
   → 通道二(500×500) → 大终点区(600×500) → 空区(500×500) → 置物台(1800×400, 高300)
 
 小起点/小终点: 200×200 居中于大区
 所有 500 宽区域在 2100 内居中
+避障区内: 2根圆柱障碍物(直径300，高300，红/蓝各一)
+置物台上: 球体(φ200-300)、正方体(300³)、圆柱体(φ300×300)
+标签: A4纸印"球体""正方体""圆柱体"，终点区展示用
+标记区: 3个150×150框，距置物台200mm
 ```
 
-### 传感器约束
-
-- **LiDAR 安装高度 > 300mm**：全场只能看到置物台上的 3 个物体
-- 柱子(高 300mm)、置物台(高 300mm)、地上胶带 — 均在 LiDAR 平面以下，不可见
-- 柱子颜色（红/蓝）仅相机可识别
-
-### 导航方案
+### 任务流程
 
 | 阶段 | 传感器 | 方法 |
 |------|--------|------|
-| 通道穿越 | IMU + LiDAR | 航向保持 + 3 物体星座居中 |
-| 绕柱 (Task 1) | 相机 | HeadTracker + CirclePillar |
-| 物体识别 (Task 2) | LiDAR | classifyObjectAt() 多次投票 |
-| 标记区 + 播报 (Task 3) | LiDAR + TTS | 以物体为参照定位 |
+| 通道一穿越 | IMU + LiDAR | 航向保持 + 3物体星座居中 |
+| 避障区绕柱 (Task 1) | 相机 | HeadTracker + ObjectFollower + CirclePillar（S型绕行，左右由裁判指定） |
+| 找通道二入口 | LiDAR | 原地旋转扫描 3 物体方向 |
+| 通道二穿越 | LiDAR | 3物体星座居中导航 |
+| 终点区标签识别 | 相机(S3 AI) | 到终点区暂停 → S3识别A4纸汉字标签（球体/正方体/圆柱体） |
+| 物体定位 (Task 2) | LiDAR | 根据标签结果，classifyObjectAt() 多次投票识别台上对应物体 |
+| 标记区+播报 (Task 3) | LiDAR + TTS | 以物体为参照接近到标记区 → ShapeVoicePlayer 播报3次 |
 
-核心思路：置物台上的 3 个物体贯穿全场始终可见，作为全程导航信标。
+核心思路：置物台上的 3 个物体贯穿全场始终可见，作为全程导航信标；终点区汉字标签决定识别目标。
 
 ## 关键模块说明
 
 ### 主控 (ESP32)
 
-- **比赛状态机** (`main.cpp`): Task1(相机绕柱) → Task2(LiDAR识别) → Task3(标记区+播报)，5分钟超时保护
+- **比赛状态机** (`main.cpp`): Task1(相机绕柱) → Task2(S3读汉字标签→LiDAR物体识别) → Task3(标记区+播报)，各5分钟超时保护
 - **3物体信标导航**: LiDAR 检测3物体 → 计算中心偏移 → 修正方向，用于通道穿越和区域导航
 - **TumbleGuard / FallDetector**: 两套独立的跌倒检测。均使用 IMU 角度判断，跌倒时调用动作组起立
 - **LidarDriver**: A1M8 RPLIDAR 驱动，含形状识别（区分球体/正方体/圆柱体）
 - **HeadTracker**: 头部舵机追踪颜色目标
 - **ObjectFollower**: 整体跟随颜色目标
 - **CirclePillar**: 绕柱导航
+
+## 调试工具
+
+### LiDAR 可视化 (`tools/lidar_viewer.py`) — 两人通用
+
+PC 端实时雷达视图工具，接到串口数据就显示极坐标图。**同学A 和 同学B 都用同一个工具**。
+
+```bash
+pip install matplotlib pyserial numpy                    # 仅首次
+python tools/lidar_viewer.py COM3                       # 实时显示
+python tools/lidar_viewer.py COM3 --record              # 录制日志
+python tools/lidar_viewer.py scan_20260611.log          # 回放日志
+```
+
+**同学A**：`main.cpp` 里 `#define LIDAR_STREAM_MODE` → `pio run -t upload` → 工具自动显示。
+
+**同学B**：打开 `LiDARTest/LiDARTest.ino` → Arduino IDE 上传 → 同一工具自动显示。
+
+数据协议统一为 `SCAN <ts> <count>\n<angle> <dist> <quality>\n... END`。
 
 ### 视觉 (ESP32-S3)
 
