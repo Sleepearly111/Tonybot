@@ -27,6 +27,9 @@ class HW_ESP32Cam{
     // AI 识别结果读取（S3 视觉协处理器）
     uint8_t readAILabel();   // 读取标签结果 (寄存器 0x10) — 0x11=球体 0x12=正方体 0x13=圆柱体
     uint8_t readAIShape();   // 读取形状结果 (寄存器 0x20) — 1=球体 2=正方体 3=圆柱体
+
+    // S3 模式控制 (寄存器 0x30)
+    void setMode(uint8_t mode);  // 0x01=颜色追踪(Task1) 0x02=AI标签(Task2+3)
 };
 
 #endif //__ESP32CAM_CTL_H_

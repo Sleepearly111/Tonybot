@@ -20,6 +20,9 @@ static uint8_t g_ai_shape_id = 0x00;
 static uint8_t rec = 0xFF;
 static uint8_t send_data[4] = {0};
 
+// S3 工作模式 (ESP32 通过 I2C 寄存器 0x30 写入)
+volatile uint8_t g_s3_mode = 0x00;  // 0x00=idle, 0x01=颜色追踪, 0x02=AI标签
+
 // 【新增】：暴露给主程序的接口，用来更新 AI 识别结果
 void update_ai_iic_data(uint8_t label, uint8_t shape) {
     g_ai_label_id = label;
@@ -27,9 +30,16 @@ void update_ai_iic_data(uint8_t label, uint8_t shape) {
 }
 
 static void iic_receive(int len){
-  while(Wire.available()){
+  // 读取第一个字节 → 寄存器地址
+  if (Wire.available()) {
     rec = Wire.read();
-  }  
+  }
+  // 如果还有第二个字节 → 寄存器值 (用于写寄存器, 如模式切换)
+  if (Wire.available() && rec == 0x30) {
+    g_s3_mode = Wire.read();
+  }
+  // 清空剩余
+  while (Wire.available()) { Wire.read(); }
 }
 
 static void iic_request()
