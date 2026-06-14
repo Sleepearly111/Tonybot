@@ -23,13 +23,9 @@ enum PillarRoute {
 // 启动指定流程（主程序一句话调用）
 void pillarRoute_start(PillarRoute route);
 
-// 当前阶段的颜色、绕向、轮数
+// 当前阶段的颜色和绕向
 uint8_t pillarRoute_color();
 uint8_t pillarRoute_direction();
-int    pillarRoute_rounds();
-
-// 设置两阶段各自的前进轮数（默认各6）
-void pillarRoute_setRounds(int first, int second);
 
 // 当前阶段完成时调用，切到下一阶段。返回 true = 全部完成
 bool pillarRoute_next();

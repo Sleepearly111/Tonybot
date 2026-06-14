@@ -43,10 +43,9 @@ void setup() {
     delay(2000);
 
     // ========== 一句话选路线 ==========
-    //pillarRoute_start(ROUTE_BLUE_RIGHT);
-    pillarRoute_setRounds(6, 9);  // 第一段6轮，第二段9轮
+    pillarRoute_start(ROUTE_BLUE_RIGHT);
     // pillarRoute_start(ROUTE_BLUE_LEFT);
-     pillarRoute_start(ROUTE_RED_RIGHT);
+    // pillarRoute_start(ROUTE_RED_RIGHT);
     // pillarRoute_start(ROUTE_RED_LEFT);
 
     tracker_set_color(TRACK_COLOR_RED);
@@ -58,10 +57,8 @@ void loop() {
 
         case GO_TO_PILLAR: {
             objectFollower_update(pillarRoute_color());
-            if (get_width() > 220) {
-                Controller.runActionGroup(0, 1);  // 先直立
-                delay(800);
-                circlePillar_init(pillarRoute_rounds());
+            if (get_width() > 230) {
+                circlePillar_init();
                 main_state = CIRCLE_PILLAR;
             }
             break;
@@ -69,7 +66,7 @@ void loop() {
 
         case CIRCLE_PILLAR: {
             circlePillar_update(pillarRoute_color(), pillarRoute_direction());
-            // 绕柱完成（内部满轮数前进自动DONE）
+            // 绕柱完成（内部满4轮前进自动DONE）
             if (circlePillar_isDone()) {
                 if (pillarRoute_next()) {
                     // 两根柱子全部绕完

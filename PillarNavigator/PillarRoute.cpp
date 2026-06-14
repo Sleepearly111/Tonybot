@@ -22,7 +22,6 @@ static const uint8_t ROUTE_TABLE[4][2][2] = {
 
 static uint8_t route_index = 0;  // 当前流程编号
 static uint8_t phase = 0;        // 当前阶段 0 或 1
-static int    phase_rounds[2] = {6, 6};  // 两阶段各需前进轮数
 
 void pillarRoute_start(PillarRoute route) {
     route_index = (uint8_t)route;
@@ -35,15 +34,6 @@ uint8_t pillarRoute_color() {
 
 uint8_t pillarRoute_direction() {
     return ROUTE_TABLE[route_index][phase][1];
-}
-
-int pillarRoute_rounds() {
-    return phase_rounds[phase];
-}
-
-void pillarRoute_setRounds(int first, int second) {
-    phase_rounds[0] = first;
-    phase_rounds[1] = second;
 }
 
 bool pillarRoute_next() {

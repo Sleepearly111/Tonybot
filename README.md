@@ -5,7 +5,7 @@ CRAIC 2026 具身智能任务赛，双人协作开发。
 | 角色 | 工具 | 负责 |
 |------|------|------|
 | **同学A** | VS Code + PlatformIO | `Esp32/`、`Esp32S3/`（主控+视觉）、`tools/`（调试工具） |
-| **同学B** | Arduino IDE | `PillarNavigator/`、`ESP32S3Cam/`（绕柱+视觉原版）、`LiDARTest/`（雷达测试） |
+| **同学B** | Arduino IDE | `EndZoneClassify/`（LiDAR导航+识别）、`PillarNavigator/`、`ESP32S3Cam/`（已完成） |
 
 ## 仓库结构
 
@@ -55,9 +55,10 @@ CRAIC 2026 具身智能任务赛，双人协作开发。
 │   ├── platformio.ini        # 项目配置
 │   └── ...
 │
-├── PillarNavigator/          # [同学B] Arduino IDE 绕柱原版
-├── ESP32S3Cam/               # [同学B] Arduino IDE 视觉原版
-├── LiDARTest/                # [同学B] Arduino IDE 雷达独立测试
+├── PillarNavigator/          # [同学B] Arduino IDE 绕柱程序（已完成）
+├── ESP32S3Cam/               # [同学B] Arduino IDE 视觉程序（已完成）
+├── EndZoneClassify/           # [同学B] Arduino IDE LiDAR导航+物体识别（进行中）
+├── LiDARTest/                # [同学B] Arduino IDE 雷达基础测试
 ├── tools/                    # [共享] PC端调试工具 (lidar_viewer.py)
 └── README.md                 # 本文件
 ```
@@ -223,6 +224,34 @@ CRAIC 2026 具身智能任务赛。机器人从起点出发自主完成 3 个连
 - **ObjectFollower**: 整体跟随颜色目标
 - **CirclePillar**: 绕柱导航
 
+### 终点区导航 (EndZoneClassify, B 的 Arduino IDE 项目)
+
+B 的 LiDAR 终点区导航项目，当前使用 **navigate2** 方案：
+
+1. 雷达扫描 → 连续 2 次 mid 角度稳定（波动 < 8°）
+2. 转向对准中间物体（mid 在 90° ± 10°）
+3. 对准后直走逼近（> 130cm 每次 3 步，≤ 130cm 每次 1 步）
+4. 到达终点区（距离 65~95cm）后，连续 3 次分类一致 → 输出结果
+
+**硬件接线：** Serial1(RX=GPIO32, TX=GPIO33) 接雷达，GPIO13 接电机，Serial2(RX=GPIO16, TX=GPIO17) 接舵机。
+
+```
+EndZoneClassify/
+├── EndZoneClassify.ino       # 主程序（navigate2 状态机）
+├── lidar_common.*            # 雷达驱动 + g_map[360] 数据采集
+├── lidar_navigate2.*         # 导航方案2（当前使用）
+├── lidar_classify.*          # 物体形状识别（3轴分类）
+├── lidar_endzone.*           # 终点区判定
+├── lidar_action.*            # 舵机动作执行
+├── RPLidar.* + inc/          # RoboPeak 雷达驱动
+├── base_config.h             # 引脚定义
+├── Hiwonder.hpp              # IMU
+├── LobotServoController.h    # 总线舵机
+├── Servo.h                   # PWM 舵机
+├── src/                      # 机器人底层驱动
+└── pack/                     # 第三方库
+```
+
 ## 调试工具
 
 ### LiDAR 可视化 (`tools/lidar_viewer.py`) — 两人通用
@@ -238,7 +267,7 @@ python tools/lidar_viewer.py scan_20260611.log          # 回放日志
 
 **同学A**：`main.cpp` 里 `#define LIDAR_STREAM_MODE` → `pio run -t upload` → 工具自动显示。
 
-**同学B**：打开 `LiDARTest/LiDARTest.ino` → Arduino IDE 上传 → 同一工具自动显示。
+**同学B**：打开 `EndZoneClassify/EndZoneClassify.ino` → Arduino IDE 上传 → 同一工具自动显示。
 
 数据协议统一为 `SCAN <ts> <count>\n<angle> <dist> <quality>\n... END`。
 

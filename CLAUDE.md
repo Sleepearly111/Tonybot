@@ -70,9 +70,9 @@ All commands run from inside the project directory (`Esp32/` or `Esp32S3/`). In 
 - `main` — tested, competition-ready code
 - New features → branch from `develop`, PR back to `develop`
 
-## Current Status (2026-06-11)
+## Current Status (2026-06-14)
 
-**分工**：A 负责比赛状态机 + `Esp32/` PlatformIO 集成；B 负责 `LiDARTest/` 中三个 LiDAR 模块的算法开发
+**分工**：A 负责比赛状态机 + `Esp32/` PlatformIO 集成；B 负责 `EndZoneClassify/` 中 LiDAR 导航+物体识别的算法开发
 
 **B 进度**：雷达硬件已接通，`lidar_classify.cpp` 算法已从 A 移植，`lidar_endzone.cpp` 和 `lidar_navigate.cpp` 待 B 实现
 
