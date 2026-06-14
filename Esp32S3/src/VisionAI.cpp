@@ -9,7 +9,6 @@
 #define EI_CAMERA_FRAME_BYTE_SIZE                 3
 
 static uint8_t *snapshot_buf = nullptr;
-extern QueueHandle_t xQueueAIFrame; 
 
 // --- 数据转换函数：绝地修复打包格式 ---
 static int ei_camera_get_data(size_t offset, size_t length, float *out_ptr) {
@@ -44,17 +43,10 @@ int run_ai_label_recognition() {
         if (snapshot_buf == nullptr) return 0;
     }
 
-    camera_fb_t *fb = nullptr;
-    camera_fb_t *stale_fb = nullptr;
-    
-    // 狂暴排空积压帧
-    while (xQueueReceive(xQueueAIFrame, &stale_fb, 0) == pdTRUE) {
-        esp_camera_fb_return(stale_fb); 
-    }
-
-    // 等待最新鲜的照片
-    if (xQueueReceive(xQueueAIFrame, &fb, portMAX_DELAY) != pdTRUE) {
-        Serial.println("ERR: 摄像头队列死锁，拿不到照片");
+    // 直接获取最新帧 (grab_mode = CAMERA_GRAB_LATEST)
+    camera_fb_t *fb = esp_camera_fb_get();
+    if (!fb) {
+        Serial.println("ERR: 摄像头拿不到照片");
         return 0;
     }
 

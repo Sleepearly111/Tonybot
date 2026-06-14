@@ -126,3 +126,10 @@ uint8_t HW_ESP32Cam::readAIShape()
   return 0;
 }
 
+void HW_ESP32Cam::setMode(uint8_t mode) {
+    Wire.beginTransmission(ESP32CAM_ADDR);
+    Wire.write(0x30);       // 模式寄存器
+    Wire.write(mode);
+    Wire.endTransmission();
+}
+

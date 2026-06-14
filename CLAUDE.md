@@ -199,7 +199,10 @@ Esp32/src/              Esp32S3/src/
 | **RobotTracking** | ✅ Done | PID visual tracking (head servo + leg action groups) |
 | **TTS/ASR + ShapeVoicePlayer** | ✅ Done | Voice synthesis + recognition; announces object name 3× |
 | **ESP32Cam I2C** | ✅ Done | I2C master comms with S3 slave |
-| **ESP32-S3 Vision** | ✅ Done | Camera + HSV detection + AI inference (汉字分类: 球体/正方体/圆柱体) |
+| **ESP32-S3 Vision** | ✅ Done | Camera + HSV color detection (红蓝双色同时检测) + AI label recognition (汉字分类), 模式由ESP32通过I2C 0x30寄存器切换 |
+| **PillarRoute** | ✅ Done | 4种S型绕柱路线表 (RED/BLUE × LEFT/RIGHT)，赛前一句话切换 |
+| **比赛状态机** | ✅ Done | ESP32: 14阶段 Task1(6) + Task2+3(8) + INIT + DONE/ERROR + T1超时5min + T2+3超时5min |
+| **S3状态机** | ✅ Done | ESP32-S3: 3模式 (idle/颜色追踪/AI标签) + I2C双色同步检测 + 直接fb_get帧获取 |
 | **Servo drivers** | ✅ Done | PWM (LEDC) + Lobot serial bus servo protocols |
 
 ## Gap Analysis
@@ -208,8 +211,9 @@ Esp32/src/              Esp32S3/src/
 
 | Priority | 模块 | 说明 |
 |----------|------|------|
-| 🔴 P0 | **比赛状态机** | `main.cpp`: Task1(相机绕柱) → Task2(读I2C标签→调B的LiDAR算法识别) → Task3(标记区+播报)，带超时保护 |
-| 🔴 P0 | **集成B的LiDAR算法** | B 在 `LiDARTest/` 写好后，A 移植到 `Esp32/src/lidar/` 或调用 B 的接口 |
+| ✅ P0 | **比赛状态机** | `main.cpp` 已实现完整14阶段状态机，含 Task1(通道一→绕柱→通道二), Task2(终点区→标签→识别), Task3(标记区→播报)，5min超时 |
+| 🔴 P0 | **LiDAR算法增强** | main.cpp 中的 `findThreeObjects()`/`constellationOffset()`/`isAtEndZone()` 为基础实现，实测后需调参；可参考 B 的 EndZoneClassify 算法改进 |
+| 🔴 P0 | **集成PillarRoute** | main.cpp 已集成 PillarRoute (4种S型绕柱路线)，赛前修改 `PILLAR_ROUTE` 宏即可 |
 | 🟡 P1 | **CirclePillar DONE** | 加自动退出条件 |
 | 🟡 P1 | **碰撞规避** | 实时 LiDAR 前方监测，碰撞前刹车 |
 | 🟢 P2 | **扣分计数** | 运行时记录碰撞/压线次数 |
