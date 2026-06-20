@@ -101,7 +101,7 @@ int run_ai_label_recognition() {
         }
     }
 
-    if (max_score > 0.7f && strcmp(winner_label, "background") != 0) {
+    if (max_score > 0.85f && strcmp(winner_label, "background") != 0) {
         if (strcmp(winner_label, "sphere") == 0)   best_class = 1; 
         else if (strcmp(winner_label, "cube") == 0)     best_class = 2; 
         else if (strcmp(winner_label, "Cylinder") == 0) best_class = 3; 

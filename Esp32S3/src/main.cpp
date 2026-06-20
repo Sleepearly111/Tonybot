@@ -83,13 +83,13 @@ static void onI2CReceive(int len) {
 
 static void onI2CRequest() {
     switch (g_i2c_reg) {
-        case 0x01:  // 红色色块 (TRACK_COLOR_RED = 0x01)
+        case 0x00:  // 红色色块
             g_send_buf[0] = g_color_data[IDX_RED].x;
             g_send_buf[1] = g_color_data[IDX_RED].y;
             g_send_buf[2] = g_color_data[IDX_RED].width;
             g_send_buf[3] = g_color_data[IDX_RED].length;
             break;
-        case 0x02:  // 蓝色色块 (TRACK_COLOR_BLUE = 0x02)
+        case 0x01:  // 蓝色色块
             g_send_buf[0] = g_color_data[IDX_BLUE].x;
             g_send_buf[1] = g_color_data[IDX_BLUE].y;
             g_send_buf[2] = g_color_data[IDX_BLUE].width;
